@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona - Giełda Premium: alarm + wypełniacz
 // @namespace    tw.gielda.wypelniacz
-// @version      5.54
+// @version      5.55
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/gielda-premium.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/gielda-premium.user.js
 // @description  Jeden skrypt do Giełdy Premium. Per surowiec ustawiasz poziom kursu (surowca za 1 PP): przy kursie >= limitu kupna / <= limitu sprzedaży skrypt alarmuje (dźwięk, powiadomienie, opcjonalnie telefon), a po kliknięciu "Kalkuluj najlepszą ofertę" wpisuje do formularza ilość dla jednego surowca z najlepszą ceną. Zapisuje też historię kursów. Potwierdzenie oferty w grze klikasz sam.
@@ -316,12 +316,17 @@
         return baza;
     }
     const doPelna = () => ST.sprzedazDoPelna && !ST.potok;
-    // Tylko przy wypychaniu gieldy na maksa (tryb "sprzedaz do pelna"): gdy kurs spelnia limit, a wyliczona ilosc
-    // to 0 przez "ponizej 1 PP", gra i tak zaokragla oferte w gore do pelnego PP - wpisanie 1 szt. daje oferte
-    // za 1 PP. Warunek: surowiec jest w wiosce i jest wolny kupiec.
-    function mozeJedynke(r, w) {
-        if (!ST.jedynka || !doPelna() || !/poni\u017cej 1 PP/.test(w.powod || '')) return false;
-        return (wioska(r).ma || 0) >= 1 && wolniKupcy() >= 1;
+    // Gielda wypchnieta na maksa: wolnego miejsca zostalo mniej, niz warte jest 1 PP (kurs wtedy jest zly, wiec limit
+    // sprzedazy nie zadziala). Gra i tak zaokragla oferte w gore do pelnego PP, wiec wpisanie 1 szt. daje oferte
+    // za 1 PP - gra sama dobiera ilosc (reszta miejsca na gieldzie). Warunek: surowiec w wiosce + wolny kupiec.
+    function jedynkaSprzedaz(m, r) {
+        if (!ST.jedynka) return null;
+        const a = m.s[r], w = wioska(r);
+        const miejsce = Math.floor(a.cap - a.stock);
+        const nJedenPP = Math.floor((a.p0 - Math.sqrt(Math.max(0, a.p0 * a.p0 - 2 * a.k / (1 - m.ts)))) / a.k);
+        if (!(miejsce >= 1) || miejsce >= nJedenPP) return null;   // gielda nie jest jeszcze na maksa
+        if ((w.ma || 0) < 1 || wolniKupcy() < 1) return null;
+        return { r, typ: 'sell', n: 1, pp: 1, miejsce, jedynka: true };
     }
     function losujPP(pMax) {
         if (!rozrzutOn() || CONFIG.rozrzutMax <= 0 || pMax <= 1) return pMax;
@@ -888,7 +893,7 @@
         dp.appendChild(checkbox('pew_do_pelna', ST.sprzedazDoPelna, 'sprzedaż za jednym strzałem: do pełnej pojemności giełdy', 'gdy kurs ≤ limit sprzedaży, wpisuje max co się da (zasoby wioski, kupcy, wolne miejsce na giełdzie) – kurs może spaść daleko poniżej limitu. Limit sprzedaży działa tylko jako start'));
         ustTd.appendChild(dp);
         const jp = el('div', 'margin-top:4px');
-        jp.appendChild(checkbox('pew_jedynka', ST.jedynka, 'przy „sprzedaży do pełna”: gdy skrypt liczy 0 szt., wpisz 1 szt. i niech gra sama dobierze ilość za 1 PP', 'działa tylko z włączoną „sprzedażą za jednym strzałem”. Gdy giełda jest już wypchnięta na maksa i skrypt liczy poniżej 1 PP, gra i tak zaokrągla ofertę w górę do pełnego PP – wpisanie 1 szt. daje ofertę za 1 PP (np. 200 szt.). Ofertę oglądasz i potwierdzasz sam w grze'));
+        jp.appendChild(checkbox('pew_jedynka', ST.jedynka, 'giełda wypchnięta na maksa (wolnego miejsca < 1 PP): wpisz 1 szt. i niech gra sama dobierze sprzedaż za 1 PP', 'gdy żaden limit nie jest spełniony, ale na giełdzie zostało mniej miejsca niż warte jest 1 PP, gra i tak zaokrągla ofertę w górę do pełnego PP – wpisanie 1 szt. daje ofertę za 1 PP (np. 200 szt.). Wybieram surowiec z najmniejszą ilością wolnego miejsca. Ofertę oglądasz i potwierdzasz sam w grze'));
         ustTd.appendChild(jp);
         ust.appendChild(ustTd); box.appendChild(ust);
 
@@ -1603,6 +1608,7 @@
         const budzet = Math.min(punktyPremium(), ST.budzet === null ? Infinity : ST.budzet);
         const linie = [];
         const kandydaci = [];
+        const jedynki = [];     // gielda wypchnieta na maksa: kandydaci "wpisz 1 szt."
         const kupnoPoza = [];   // surowce spelniajace limit kupna, ale ta wioska ma ich za duzo
         let brakSily = false; // kurs spelnia limit, ale ta wioska nie ma zasobow/kupcow
         wyczyscFormularz();
@@ -1638,13 +1644,26 @@
             } else if (L.sell !== null) {
                 if (kurs > L.sell) {
                     linie.push(nazwa + ': kurs teraz ' + kurs + ' > limit sprzedaży ' + L.sell + ' – nie sprzedaję.');
+                    const j = jedynkaSprzedaz(m, r);
+                    if (j) jedynki.push(j);
                 } else {
                     const w = ileSprzedac(m, r, L.sell);
                     if (w.n > 0) kandydaci.push({ r, typ: 'sell', n: w.n, pp: w.pp, kupcy: w.kupcy, ostatni: w.ostatni, powod: w.powod, kurs, zysk: zwrotSprzedazy(m, r, w.n) - w.n / (L.sell * (1 + m.tb)) });
-                    else if (mozeJedynke(r, w)) kandydaci.push({ r, typ: 'sell', n: 1, pp: 1, powod: w.powod, kurs, zysk: 0, jedynka: true });
-                    else { brakSily = true; linie.push(nazwa + ': sprzedaż 0 szt. (ogranicza: ' + w.powod + ').'); }
+                    else {
+                        const j = /poni\u017cej 1 PP/.test(w.powod || '') ? jedynkaSprzedaz(m, r) : null;
+                        if (j) jedynki.push(j);
+                        else { brakSily = true; linie.push(nazwa + ': sprzedaż 0 szt. (ogranicza: ' + w.powod + ').'); }
+                    }
                 }
             }
+        }
+
+        // nic nie spelnia limitow, ale gielda jest wypchnieta na maksa: wpisz 1 szt. surowca, ktorego zostalo najmniej miejsca
+        // (najmniej surowca oddajesz za to samo 1 PP); gra sama skalkuluje oferte
+        if (!kandydaci.length && jedynki.length) {
+            jedynki.sort((x, y) => x.miejsce - y.miejsce);
+            const j = jedynki[0];
+            kandydaci.push(Object.assign({}, j, { kurs: kursTabeli(m, j.r), zysk: 0, powod: 'giełda wypchnięta na maksa' }));
         }
 
         let lacznie = 0;
@@ -1700,7 +1719,7 @@
             lacznie = c.n;
             wpisz(c.typ + '_' + c.r, c.n);
             if (c.jedynka) {
-                linie.unshift(NAZWY[c.r] + ': wyliczona ilość < 1 PP – wpisano 1 szt., gra sama dobierze sprzedaż za 1 PP (kurs ' + c.kurs + '). Sprawdź ją w oknie potwierdzenia (ogranicza: ' + c.powod + ').');
+                linie.unshift(NAZWY[c.r] + ': giełda wypchnięta na maksa (miejsca zostało ' + fmt(c.miejsce) + ' szt., mniej niż warte 1 PP) – wpisano 1 szt., gra sama dobierze sprzedaż za 1 PP (kurs ' + c.kurs + '). Sprawdź ofertę w oknie potwierdzenia.');
             } else if (c.typ === 'buy') {
                 const w0 = wioska(c.r);
                 if (c.n > Math.max(0, w0.wolne - Math.floor((Number.isFinite(w0.max) ? w0.max : 0) * CONFIG.zapasMagazynu))) { oznaczNadmiar(); pokazNadmiar(); }
