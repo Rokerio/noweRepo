@@ -2,6 +2,8 @@
 // @name         Masowy Zbierak API (Plemiona)
 // @namespace    plemiona.masowy.zbierak.api
 // @version      7.5
+// @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/zbierak-api.user.js
+// @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/zbierak-api.user.js
 // @description  Zbieractwo masowe przez API gry: kazda wioska dostaje wlasny sklad, wszystkie poziomy wracaja o tej samej godzinie. Jeden przycisk wysyla komplet.
 // @match        *://*.plemiona.pl/*
 // @match        *://*.tribalwars.net/*

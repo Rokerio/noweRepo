@@ -2,6 +2,8 @@
 // @name         Plemiona – statystyki gracza w dymku mapy
 // @namespace    dawid.plemiona
 // @version      2.9
+// @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-mapa-statystyki.user.js
+// @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-mapa-statystyki.user.js
 // @description  Dymek mapy: ODA, ODD, rekordy farmy i zbieracza, ochrona 10:1 oraz poparcie z raportów
 // @match        https://*.plemiona.pl/game.php*
 // @match        https://*.die-staemme.de/game.php*

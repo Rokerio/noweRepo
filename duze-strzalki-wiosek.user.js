@@ -2,6 +2,8 @@
 // @name         Duże strzałki przełączania wiosek
 // @namespace    plemiona-roker
 // @version      1.1
+// @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/duze-strzalki-wiosek.user.js
+// @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/duze-strzalki-wiosek.user.js
 // @description  Duże przyciski poprzednia/następna wioska: pływająca para na środku ekranu (działa też przy powiększeniu) + rząd pod opisem w Ratuszu
 // @author       Roker
 // @match        https://*.plemiona.pl/game.php*

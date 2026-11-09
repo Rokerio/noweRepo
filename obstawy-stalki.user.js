@@ -2,6 +2,8 @@
 // @name         Plemiona – Obstawy + Stałki (masowe wsparcie)
 // @namespace    dawid.plemiona.obstawy2
 // @version      2.5
+// @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/obstawy-stalki.user.js
+// @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/obstawy-stalki.user.js
 // @description  Hybryda Stałek TAXI i Hermitowskich Obstaw. Na wątku obstawy: cel i „pozostało” z forum, paczki (50 pik + 50 łuk / 25 CK), zaznaczasz wioski i jednym kliknięciem wysyłasz masowe wsparcie, potem „wysłane/pozostało” w odpowiedź. Poza forum: panel jak Hermitowskie (grupa, strategia, rezerwa, okno dotarcia, wyjście od, rozdział na prędkości).
 // @match        https://*.plemiona.pl/game.php*
 // @match        https://*.tribalwars.net/game.php*

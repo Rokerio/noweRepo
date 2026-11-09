@@ -2,6 +2,8 @@
 // @name         Plemiona - nazwy Taxi / Bolt
 // @namespace    roker.plemiona
 // @version      5.4
+// @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-nazwy.user.js
+// @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-nazwy.user.js
 // @author       Roker
 // @description  Off = Taxi, Def = Bolt. Numer = grupa geograficzna (0,1,2) + numer (w grupie najpierw offy). DUZE LITERY = ludnosc od 23 500, kropka = wioska 9k+ pkt
 // @match        https://*.plemiona.pl/game.php*

@@ -2,6 +2,8 @@
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
 // @version      3.12
+// @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
+// @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
 // @match        https://*.plemiona.pl/game.php*
 // @grant        none

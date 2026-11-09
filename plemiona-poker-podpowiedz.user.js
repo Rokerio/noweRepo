@@ -2,6 +2,8 @@
 // @name         Plemiona – Plemienny Poker podpowiedź
 // @namespace    plemiona.poker.helper
 // @version      1.4
+// @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-poker-podpowiedz.user.js
+// @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-poker-podpowiedz.user.js
 // @description  Panel z podpowiedzią w evencie Plemienny Poker: atak/wymiana kart oraz wybór flag w sklepie. Nie klika za gracza.
 // @match        https://*.plemiona.pl/game.php*
 // @run-at       document-idle
