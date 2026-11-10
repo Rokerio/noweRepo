@@ -8,6 +8,7 @@ Skrypty do Tampermonkey / Violentmonkey. Kliknij link **Instaluj** – przegląd
 | Duże strzałki przełączania wiosek | 1.1 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/duze-strzalki-wiosek.user.js) |
 | Dysponent Grup – wysyłka | 1.2.0 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js) |
 | Plemiona - Giełda Premium: alarm + wypełniacz | 5.53 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/gielda-premium.user.js) |
+| Plemiona – Grupy flag (Zagroda / Surowce / Atak / Rekrutacja) | 1.0.0 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/grupy-flag.user.js) |
 | Plemiona – Klin PRO (normalny + z cofki, auto) | 3.12 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js) |
 | Plemiona – Obstawy + Stałki (masowe wsparcie) | 2.5 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/obstawy-stalki.user.js) |
 | Plemiona – statystyki gracza w dymku mapy | 2.9 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-mapa-statystyki.user.js) |
