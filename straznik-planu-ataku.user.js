@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Strażnik planu ataku
 // @namespace    dawid.plemiona
-// @version      1.24
+// @version      1.25
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js
 // @description  Pływający panel z planem ataku: odliczanie do otwarcia/zamknięcia okna wysyłki, alarm dźwiękowy + powiadomienie, licznik w tytule karty, auto-odhaczanie po wysłaniu, podpowiedź celu katapult (spichlerz/zagroda). Import planu przez wklejenie BBCode (format tabelaryczny i lista "Wyślij FEJK/OFF/BURZAK"). Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.24',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.25',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -24,7 +24,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   //  DOMYŚLNY PLAN (pl233, wejście 01.10 08:00–12:00)
   // =====================================================================
   const DEFAULT_WORLD = 'pl233';
-  const VER = '1.24';
+  const VER = '1.25';
   const PLAN_VER = 'all-29.10';
   const DEFAULT_PLAN = [
     { id: 1, type: 'Burzak', vil: 13391, tgt: 11488, units: 0, note: '25k na Kuźnia', from: '617|539', to: '422|583', start: '2026-10-29 05:02:56', end: '2026-10-29 09:02:56' },
@@ -102,6 +102,25 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   store.collapsed = !!store.collapsed;
   if (window.innerWidth < 700) store.collapsed = true;   // telefon: panel po wejściu na stronę zawsze zwinięty (rozwinięty zasłania całą stronę, w tym Klina)
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { /* ignore */ } };
+
+  // ---- Moje wioski: plan z tribal plannera obejmuje też wioski innych graczy – ich nie da się otworzyć (gra zostaje w bieżącej wiosce) ----
+  const OWN_BASE = new Set([460, 1583, 1789, 1812, 2327, 2818, 7048, 8590, 9032, 9922, 10895, 11171, 11380, 11388, 11510, 11662, 11810, 11907, 11993, 12101, 12103, 12168, 12208, 12252, 12413, 12513, 12588, 12612, 12617, 12671, 12703, 12789, 12846, 12853, 12944, 13138, 13186, 13337, 13391, 13543, 13644, 13739, 13798, 13940, 14029, 14119, 14403, 14485, 14905, 19906, 20466, 20614, 20791, 21037, 21112, 21250, 21425, 21705, 21789, 21855, 21863, 21987, 22509, 22774, 22812, 23075, 23382, 23558, 23672, 24062, 24285, 32426, 32574, 32686, 33133, 33399, 33474, 33922, 34016, 34018, 34140, 34227, 34454, 34791, 34829, 34857, 34878, 34916, 35046, 35142, 35213, 35307, 35355, 35356, 35556, 35730, 35896, 35906, 36047, 36141, 36294, 36499, 36678, 36826, 36977, 37220, 37349, 37626, 37632, 37701, 37778, 37796, 38071, 38085, 38220, 38323, 38699, 38842, 38938, 38979, 39095, 39316, 39369, 39375]);
+  store.own = store.own || {};
+  store.foreign = store.foreign || {};
+  const mine = a => !!(OWN_BASE.has(a.vil) || store.own[a.vil]) && !store.foreign[a.vil];
+  (function learnOwn() {
+    const here = +game_data.village.id;
+    store.own[here] = 1; delete store.foreign[here];
+    // po kliknięciu „Plac”: jeśli gra nie otworzyła żądanej wioski, to nie jest Twoja
+    try {
+      const t = JSON.parse(sessionStorage.getItem('pa_try') || 'null');
+      sessionStorage.removeItem('pa_try');
+      if (t && Date.now() - t.ts < 60000) { if (t.vil === here) { store.own[t.vil] = 1; delete store.foreign[t.vil]; } else { store.foreign[t.vil] = 1; delete store.own[t.vil]; } }
+    } catch (e) { /* brak */ }
+    // przegląd wiosek: zbierz wszystkie swoje id
+    if (/screen=overview_villages/.test(location.search)) document.querySelectorAll('[data-id].quickedit-vn, .quickedit-vn[data-id]').forEach(el => { const id = +el.dataset.id; if (id) { store.own[id] = 1; delete store.foreign[id]; } });
+    try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) { /* ignore */ }
+  })();
 
   const pad = (n, l = 2) => String(n).padStart(l, '0');
   function now() {
@@ -244,7 +263,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
 
   function checkAlarms(n) {
     store.plan.forEach(a => {
-      if (store.done[a.id]) return;
+      if (store.done[a.id] || !mine(a)) return;
       const s = toMs(a.start), e = toMs(a.end);
       const fire = (k, cond, text) => { if (cond && !store.alerted[a.id + ':' + k]) { store.alerted[a.id + ':' + k] = 1; save(); alarm(k, a, text); } };
       fire('warn', n < s && s - n <= store.warnMin * 6e4, `Okno otwiera się za ${Math.ceil((s - n) / 6e4)} min (${a.from} → ${a.to})`);
@@ -322,7 +341,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   function render() { if (impOpen) return; const sc = panel.scrollTop; renderInner(); panel.scrollTop = sc; }
   function renderInner() {
     const n = now();
-    const pending = store.plan.filter(a => !store.done[a.id] && n <= toMs(a.end));
+    const pending = store.plan.filter(a => mine(a) && !store.done[a.id] && n <= toMs(a.end));
     const openNow = pending.filter(a => n >= toMs(a.start));
     const head = `<div class="pa-hd" id="pa-toggle">⚔️ Plan ataku <span>${openNow.length ? '🟢 ' + openNow.length + ' do wysłania' : pending.length + ' w kolejce'} ${store.collapsed ? '▲' : '▼'}</span></div>`;
     if (store.collapsed) { panel.innerHTML = head; return; }
@@ -330,7 +349,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     const showAll = !!store.showAll;
     const typeF = store.typeF || {};
     const typeOn = Object.keys(typeF).filter(k => typeF[k]);
+    const showForeign = !!store.showForeign;
     const vis = a => {
+      if (!mine(a) && !showForeign) return false;
       if (typeOn.length && !typeOn.includes(a.type)) return false;
       if (showAll) return true;
       if (store.done[a.id] || n > toMs(a.end)) return false;          // wysłane / przeminęły
@@ -347,12 +368,12 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
           ${a.note ? `<br>🎯 ${a.note}` : ''}
           <br>okno ${dayLbl(toMs(a.start))} ${hm(toMs(a.start))} – ${hm(toMs(a.end))}${dayLbl(toMs(a.end)) !== dayLbl(toMs(a.start)) ? ' (' + dayLbl(toMs(a.end)) + ')' : ''}
           <div class="pa-st">${st.txt}</div></div>
-        ${st.k === 'done' ? '' : `<a class="btn" href="${sendUrl(a)}">Plac</a>`}
+        ${st.k === 'done' ? '' : (mine(a) ? `<a class="btn" data-vil="${a.vil}" href="${sendUrl(a)}">Plac</a>` : `<a class="btn" data-vil="${a.vil}" href="${sendUrl(a)}" title="Wioska spoza Twojej listy – spróbuj" style="opacity:.5">cudza?</a>`)}
       </div>`;
     }).join('');
     const types = [...new Set(store.plan.map(a => a.type))];
     const chips = types.map(t => {
-      const c = store.plan.filter(a => a.type === t && !store.done[a.id] && n <= toMs(a.end)).length;
+      const c = store.plan.filter(a => mine(a) && a.type === t && !store.done[a.id] && n <= toMs(a.end)).length;
       if (!c && !typeF[t]) return '';
       return `<label style="margin-right:8px;white-space:nowrap"><input type="checkbox" data-type="${t}" ${typeF[t] ? 'checked' : ''}> ${t} <b>${c}</b></label>`;
     }).join('');
@@ -362,6 +383,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     panel.innerHTML = head + flt + (items || `<div class="pa-it">${store.plan.length ? 'Nic nie czeka w najbliższych 10 min.' : 'Brak planu – wklej BBCode poniżej.'}</div>`) + `
       <div class="pa-ft">🔔 alarm <input type="number" id="pa-warn" min="0" value="${store.warnMin}"> min przed otwarciem,
         ⚠️ <input type="number" id="pa-last" min="0" value="${store.lastMin}"> min przed zamknięciem
+        <br><label><input type="checkbox" id="pa-foreign" ${store.showForeign ? 'checked' : ''}> pokaż też cudze wioski (${store.plan.filter(a => !mine(a)).length})</label>
         <br><label><input type="checkbox" id="pa-lockopt" ${store.lockOn ? 'checked' : ''}> blokuj „Wyślij” do początku okna (gdy zostało ≤10 min)</label>
         <br><a href="#" id="pa-imp">📋 wklej nowy plan (BBCode)</a> · <a href="#" id="pa-reset">wyczyść odhaczenia</a> · <a href="#" id="pa-test">test dźwięku</a>
         <div id="pa-impbox" style="display:none"><textarea placeholder="Wklej BBCode z planera (tabela lub lista „Wyślij FEJK/OFF/BURZAK”)"></textarea><button class="btn" id="pa-impgo">Wczytaj</button> <button class="btn" id="pa-impno">Anuluj</button></div>
@@ -371,7 +393,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   panel.addEventListener('click', e => {
     const t = e.target;
     if (t.closest('#pa-toggle')) return;
-    if (t.closest('a.btn[href*="screen=place"]')) { store.collapsed = true; save(); return; }   // po wejściu na plac panel się zwija
+    if (t.closest('a.btn[href*="screen=place"]')) { const b = t.closest('a.btn'); try { sessionStorage.setItem('pa_try', JSON.stringify({ vil: +b.dataset.vil, ts: Date.now() })); } catch (e) { /* brak */ } store.collapsed = true; save(); return; }   // po wejściu na plac panel się zwija
     if (t.id === 'pa-clrtype') { e.preventDefault(); store.typeF = {}; save(); render(); return; }
     if (t.id === 'pa-imp') { e.preventDefault(); impOpen = true; const b = panel.querySelector('#pa-impbox'); b.style.display = ''; const ta = b.querySelector('textarea'); ta.focus(); return; }
     if (t.id === 'pa-reset') { e.preventDefault(); if (confirm('Wyczyścić odhaczenia i alarmy?')) { store.done = {}; store.alerted = {}; save(); render(); } return; }
@@ -390,6 +412,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   panel.addEventListener('change', e => {
     const t = e.target;
     if (t.dataset.id) { if (t.checked) store.done[t.dataset.id] = now(); else delete store.done[t.dataset.id]; save(); render(); }
+    if (t.id === 'pa-foreign') { store.showForeign = t.checked; save(); render(); return; }
     if (t.id === 'pa-lockopt') { store.lockOn = t.checked; save(); return; }
     if (t.dataset.type) { store.typeF = store.typeF || {}; store.typeF[t.dataset.type] = t.checked; save(); render(); return; }
     if (t.id === 'pa-all') { store.showAll = t.checked; save(); render(); return; }
@@ -659,7 +682,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     const n = now();
     checkAlarms(n);
     if (!panel.matches(':focus-within')) render();
-    const open = store.plan.filter(a => !store.done[a.id] && n >= toMs(a.start) && n <= toMs(a.end));
+    const open = store.plan.filter(a => mine(a) && !store.done[a.id] && n >= toMs(a.start) && n <= toMs(a.end));
     if (open.length) {
       const soonest = open.reduce((x, y) => toMs(x.end) < toMs(y.end) ? x : y);
       document.title = `🟢 ${open.length} do wysłania (#${soonest.id} ${fmtLeft(toMs(soonest.end) - n)}) · ` + ORIG_TITLE;
