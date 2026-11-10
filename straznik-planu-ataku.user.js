@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Strażnik planu ataku
 // @namespace    dawid.plemiona
-// @version      1.23
+// @version      1.24
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js
 // @description  Pływający panel z planem ataku: odliczanie do otwarcia/zamknięcia okna wysyłki, alarm dźwiękowy + powiadomienie, licznik w tytule karty, auto-odhaczanie po wysłaniu, podpowiedź celu katapult (spichlerz/zagroda). Import planu przez wklejenie BBCode (format tabelaryczny i lista "Wyślij FEJK/OFF/BURZAK"). Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.23',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.24',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -24,7 +24,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   //  DOMYŚLNY PLAN (pl233, wejście 01.10 08:00–12:00)
   // =====================================================================
   const DEFAULT_WORLD = 'pl233';
-  const VER = '1.23';
+  const VER = '1.24';
   const PLAN_VER = 'all-29.10';
   const DEFAULT_PLAN = [
     { id: 1, type: 'Burzak', vil: 13391, tgt: 11488, units: 0, note: '25k na Kuźnia', from: '617|539', to: '422|583', start: '2026-10-29 05:02:56', end: '2026-10-29 09:02:56' },
@@ -554,7 +554,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
       const here = store.plan.filter(x => x.vil === curVil && !store.done[x.id] && n0 <= toMs(x.end)).length;
       const dbox = document.getElementById('pa-hint') || document.createElement('div');
       dbox.id = 'pa-hint';
-      dbox.innerHTML = `⚔️ Strażnik v${VER}: brak pasującego ataku (wioska ${curVil}${curTgt ? ', cel ' + curTgt : ''}). Plan: ${store.plan.length} poz., czekających ${alive}, z tej wioski ${here}.` + (alive ? '' : ' <b>Plan na tym urządzeniu jest nieaktualny – wklej nowy (📋 w panelu).</b>');
+      const other = curTgt || curXY ? store.plan.filter(x => !store.done[x.id] && n0 <= toMs(x.end) && (curTgt ? x.tgt === curTgt : x.to === curXY)) : [];
+      dbox.innerHTML = `⚔️ Strażnik v${VER}: brak pasującego ataku (wioska ${curVil}${curTgt ? ', cel ' + curTgt : ''}). Plan: ${store.plan.length} poz., czekających ${alive}, z tej wioski ${here}.` + (alive ? '' : ' <b>Plan na tym urządzeniu jest nieaktualny – wklej nowy (📋 w panelu).</b>') +
+        (other.length ? '<br>Ten cel jest w planie z innej wioski: ' + other.map(x => `<a href="${sendUrl(x)}">#${x.id} ${x.type} z ${x.from}</a>`).join(', ') : (alive ? '<br>Tego celu nie ma w planie – atak spoza planu, Strażnik nic nie wypełni.' : ''));
       if (!dbox.parentElement) {
         const anchor = document.querySelector('#command-data-form') || (document.querySelector('input[name="axe"], input[name="spear"]') || {}).form || document.getElementById('content_value');
         if (anchor && anchor.parentElement) anchor.parentElement.insertBefore(dbox, anchor);
