@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.2.1
+// @version      1.2.2
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.2.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.2.2',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -441,7 +441,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			else if (isNext && !recipGroups.length && !range) Object.values(all).forEach(v => recipIds.add(v.id));
 			else if (range && !recipGroups.length) Object.values(all).forEach(v => { if (inRange(v)) recipIds.add(v.id); });
 			else for (const g of recipGroups) { const ids = await loadIds(g); groupSets[g] = ids; ids.forEach(id => recipIds.add(id)); }
-			if (range) [...recipIds].forEach(id => { if (!all[id] || !inRange(all[id])) recipIds.delete(id); });
+			if (range && !sel.village) [...recipIds].forEach(id => { if (!all[id] || !inRange(all[id])) recipIds.delete(id); });
 			if (sel.mode === 'build' || sel.eco || sel.stor || sel.keep) costs = await loadCosts();
 			if (sel.mode === 'build' || isNext) bld = await loadBuildings('0');
 			if (donorGroups.length && !sel.allDon && !range) {
@@ -888,7 +888,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		const btn = $(`<a href="#" id="${NS}_market" class="btn" style="margin:4px 6px 4px 0" title="Wyślij do tej wioski surowce od najbliższych dawców (ustawienia z okna na przeglądzie wiosek)">📦 Dysponent – ta wioska</a>`)
 			.on('click', e => {
 				e.preventDefault();
-				const sel = Object.assign(loadSel(), { village: game_data.village.id, recip: [] });
+				// ta wioska = zawsze tryb „uzupełnij” (pełne 1000): zapisany zakres numerów / wyrównanie / następna budowa z okna grup tu nie obowiązują
+				const sel = Object.assign(loadSel(), { village: game_data.village.id, recip: [], mode: 'fill', rFrom: 0, rTo: 0, eqSep: false });
 				btn.addClass('btn-disabled');
 				runPlanner(sel).catch(handleError).then(() => btn.removeClass('btn-disabled'));
 			});
