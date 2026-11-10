@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dostawy MK - drzewo do celu (bicie monet)
 // @namespace    dostawy-mk-drzewo
-// @version      2.2.0
+// @version      2.2.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @description  Menedżer konta > Dostawy: (1) zaopatrzenie nowych wiosek pod budowę i rekrutację, (2) liczy najszybsze trasy (każda wioska jeden cel, przerzuty przez wioski z kupcami) do wioski bijącej monety i po kliknięciu podmienia harmonogramy dostaw.
@@ -735,14 +735,27 @@
 			this.classList.add('btn-disabled');
 			try { apply(); } catch (e) { console.error(e); msg.err('Dostawy: ' + (e.message || e)); }
 		});
+		const logEl = () => $('#' + NS + '_log').css({ fontSize: '12px' });
+		const preview = () => {
+			try {
+				const st = buildSteps();
+				const nD = st.filter(x => x.t === 'del').reduce((a, x) => a + x.ids.length, 0), nN = st.filter(x => x.t === 'new').length;
+				logEl().css('color', st.length ? '' : '#070').html(st.length
+					? `Do zrobienia: usunąć <b>${nD}</b>, utworzyć <b>${nN}</b> harmonogramów.`
+					: `<b>✔ Wszystkie harmonogramy są już takie jak w planie</b> - nic do zmiany (${readRoutes().length} na liście). Po zmianie ustawień kliknij „Policz trasy” jeszcze raz.`);
+				return st;
+			} catch (e) { logEl().css('color', '#a00').text('Błąd przy układaniu kroków: ' + (e.message || e)); console.error(e); return null; }
+		};
+		preview();
 		$('#' + NS + '_all').on('click', function () {
-			if (this.classList.contains('btn-disabled')) { return; }
-			const steps = buildSteps();
+			if (this.classList.contains('btn-disabled')) { logEl().css('color', '#a00').text('Już działa albo skończone - kliknij „Policz trasy”, żeby ułożyć od nowa.'); return; }
+			const steps = preview();
+			if (!steps) { return; }
 			if (!steps.length) { msg.ok('Dostawy: nic do zmiany - wszystko jest jak w planie.'); return; }
 			const nDel = steps.filter(x => x.t === 'del').reduce((a, x) => a + x.ids.length, 0), nNew = steps.filter(x => x.t === 'new').length;
 			$('#' + NS + '_log').text('Usuwam ' + nDel + ' i tworzę ' + nNew + ' harmonogramów…');
 			this.classList.add('btn-disabled'); $('#' + NS + '_apply').addClass('btn-disabled');
-			runAll(steps).catch(e => { console.error(e); msg.err('Dostawy: ' + (e.message || e)); });
+			runAll(steps).catch(e => { console.error(e); msg.err('Dostawy: ' + (e.message || e)); logEl().css('color', '#a00').text('Błąd: ' + (e.message || e) + ' - wyślij mi zrzut.'); });
 		});
 	}
 

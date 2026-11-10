@@ -4,7 +4,7 @@ Skrypty do Tampermonkey / Violentmonkey. Kliknij link **Instaluj** – przegląd
 
 | Skrypt | Wersja | Instalacja |
 |---|---|---|
-| Dostawy MK - drzewo do celu (bicie monet) | 2.2.0 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js) |
+| Dostawy MK - drzewo do celu (bicie monet) | 2.2.1 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js) |
 | Duże strzałki przełączania wiosek | 1.1 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/duze-strzalki-wiosek.user.js) |
 | Dysponent Grup – wysyłka | 1.2.0 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js) |
 | Plemiona - Giełda Premium: alarm + wypełniacz | 5.53 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/gielda-premium.user.js) |
