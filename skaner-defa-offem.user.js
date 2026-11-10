@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Skaner defa offem (auto)
 // @namespace    plemiona-roker
-// @version      2.0
+// @version      2.1
 // @description  Automatycznie czyta wysłane fejki, mierzy "Jednostki pokonane w ataku" przed/po wejściu każdego i szacuje obronę we wrogich wioskach
 // @author       Roker
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/skaner-defa-offem.user.js
@@ -9,6 +9,9 @@
 // @match        https://*.plemiona.pl/game.php*
 // @grant        none
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-defa-offem']={v:'2.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 
 (function () {
   'use strict';

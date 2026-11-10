@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Duże strzałki przełączania wiosek
 // @namespace    plemiona-roker
-// @version      1.1
+// @version      1.2
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/duze-strzalki-wiosek.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/duze-strzalki-wiosek.user.js
 // @description  Duże przyciski poprzednia/następna wioska: pływająca para na środku ekranu (działa też przy powiększeniu) + rząd pod opisem w Ratuszu
@@ -10,6 +10,9 @@
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['duze-strzalki-wiosek']={v:'1.2',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 
 (function () {
     'use strict';

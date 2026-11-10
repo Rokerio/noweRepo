@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona - nazwy Taxi / Bolt
 // @namespace    roker.plemiona
-// @version      5.4
+// @version      5.5
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-nazwy.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-nazwy.user.js
 // @author       Roker
@@ -10,6 +10,9 @@
 // @run-at       document-end
 // @grant        none
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['plemiona-nazwy']={v:'5.5',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 // LEGALNE: nic nie dzieje sie samo. Skrypt czyta tylko strone, ktora masz otwarta, i tylko gdy klikniesz "Zbierz dane z tej strony".
 // Nie wysyla wlasnych zapytan. Zmiana nazwy = 1 klikniecie = 1 wioska (natywny QuickEdit gry).
 // Typ (Taxi/Bolt) = Twoje grupy statyczne "Off" i "Deff". Uzycie: guzik "Nazwy" -> "Pobierz dane" (1 klikniecie = 3 odczyty przegladow Produkcji: Off, Deff, wszystkie - tylko odczyt, jak w Dysponencie) -> "Zmien nastepna" (1 klik = 1 wioska).

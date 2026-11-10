@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Plemienny Poker podpowiedź
 // @namespace    plemiona.poker.helper
-// @version      1.4
+// @version      1.5
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-poker-podpowiedz.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-poker-podpowiedz.user.js
 // @description  Panel z podpowiedzią w evencie Plemienny Poker: atak/wymiana kart oraz wybór flag w sklepie. Nie klika za gracza.
@@ -9,6 +9,9 @@
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['plemiona-poker-podpowiedz']={v:'1.5',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 
 if(!/[?&]screen=event_siege_poker/.test(location.search)){ /* inny ekran – nic nie rób */ }
 else

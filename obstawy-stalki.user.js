@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Obstawy + Stałki (masowe wsparcie)
 // @namespace    dawid.plemiona.obstawy2
-// @version      2.5
+// @version      2.6
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/obstawy-stalki.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/obstawy-stalki.user.js
 // @description  Hybryda Stałek TAXI i Hermitowskich Obstaw. Na wątku obstawy: cel i „pozostało” z forum, paczki (50 pik + 50 łuk / 25 CK), zaznaczasz wioski i jednym kliknięciem wysyłasz masowe wsparcie, potem „wysłane/pozostało” w odpowiedź. Poza forum: panel jak Hermitowskie (grupa, strategia, rezerwa, okno dotarcia, wyjście od, rozdział na prędkości).
@@ -10,6 +10,9 @@
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['obstawy-stalki']={v:'2.6',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 
 /*
  * ZASTĘPUJE: „Stałki TAXI” i „Obstawy (masowe wsparcie)” – wyłącz je w Tampermonkey.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Cofanie wojsk wg wiosek (gracz → wioska → wycofaj)
 // @namespace    dawid.plemiona.cofanie
-// @version      1.0
+// @version      1.1
 // @author       Roker
 // @description  Na „Wojska poza wioską → szczegóły” grupuje wsparcie wg GRACZA i WIOSKI DOCELOWEJ (rozwijane menu) zamiast wg Twoich wiosek. Jednym przyciskiem wycofujesz całe wsparcie z wybranej wioski, od gracza albo z zaznaczonych.
 // @match        https://*.plemiona.pl/game.php*
@@ -11,6 +11,9 @@
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['cofanie-wg-wiosek']={v:'1.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 
 /*
  * Następca bookmarkletu „HermitowskieCofanieWojsk” (filtry + zaznaczanie) – tu zamiast

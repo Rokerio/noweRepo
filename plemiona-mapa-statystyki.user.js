@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – statystyki gracza w dymku mapy
 // @namespace    dawid.plemiona
-// @version      2.9
+// @version      2.10
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-mapa-statystyki.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-mapa-statystyki.user.js
 // @description  Dymek mapy: ODA, ODD, rekordy farmy i zbieracza, ochrona 10:1 oraz poparcie z raportów
@@ -11,6 +11,9 @@
 // @grant        none
 // @run-at       document-idle
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['plemiona-mapa-statystyki']={v:'2.10',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 
 (function () {
   'use strict';

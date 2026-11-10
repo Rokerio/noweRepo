@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Grupy flag (Zagroda / Surowce / Atak / Rekrutacja)
 // @namespace    plemiona.grupy.flag
-// @version      1.0.0
+// @version      1.0.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/grupy-flag.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/grupy-flag.user.js
 // @description  Jednym kliknięciem tworzy / ustawia dynamiczne grupy „gdzie założyć flagę”: F Zagroda+, F Sura, F Atak, F Rekrutacja. Potem wystarczy kliknąć grupę, żeby zobaczyć wioski bez danej flagi, w których ma sens.
@@ -10,6 +10,9 @@
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['grupy-flag']={v:'1.0.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 
 /* Działa na: Przegląd → Grupy → Dynamiczne grupy.
    Skrypt wypełnia prawdziwy formularz filtrów gry (jej własnym JS), więc w razie czego widzisz, co ustawił. */

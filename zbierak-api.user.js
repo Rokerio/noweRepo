@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Masowy Zbierak API (Plemiona)
 // @namespace    plemiona.masowy.zbierak.api
-// @version      7.5
+// @version      7.6
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/zbierak-api.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/zbierak-api.user.js
 // @description  Zbieractwo masowe przez API gry: kazda wioska dostaje wlasny sklad, wszystkie poziomy wracaja o tej samej godzinie. Jeden przycisk wysyla komplet.
@@ -15,6 +15,9 @@
 // @run-at       document-idle
 // @noframes
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['zbierak-api']={v:'7.6',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 
 /*
  * Różnica wobec wersji formularzowej: nie dotykamy pól na ekranie.

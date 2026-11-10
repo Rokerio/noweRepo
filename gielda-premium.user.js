@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona - Giełda Premium: alarm + wypełniacz
 // @namespace    tw.gielda.wypelniacz
-// @version      5.55
+// @version      5.56
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/gielda-premium.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/gielda-premium.user.js
 // @description  Jeden skrypt do Giełdy Premium. Per surowiec ustawiasz poziom kursu (surowca za 1 PP): przy kursie >= limitu kupna / <= limitu sprzedaży skrypt alarmuje (dźwięk, powiadomienie, opcjonalnie telefon), a po kliknięciu "Kalkuluj najlepszą ofertę" wpisuje do formularza ilość dla jednego surowca z najlepszą ceną. Zapisuje też historię kursów. Potwierdzenie oferty w grze klikasz sam.
@@ -18,6 +18,9 @@
 // @connect      api.telegram.org
 // @run-at       document-idle
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['gielda-premium']={v:'5.56',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 
 (function () {
     'use strict';

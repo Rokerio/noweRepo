@@ -3,13 +3,16 @@
 // @namespace    claude.plemiona
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-zrzut-zrodla.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-zrzut-zrodla.user.js
-// @version      1.0
+// @version      1.1
 // @description  Przycisk 📋 na dole ekranu: kopiuje odchudzone źródło aktualnej strony (bez skryptów, styli i obrazków) do schowka. Działa w Safari na iPhonie.
 // @match        *://*.plemiona.pl/game.php*
 // @match        *://*.tribalwars.net/game.php*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
+// rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['plemiona-zrzut-zrodla']={v:'1.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+
 
 (function () {
   'use strict';
