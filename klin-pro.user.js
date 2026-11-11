@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.15
+// @version      3.16
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.15',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.16',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -519,6 +519,22 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
     if (onInfo && /^(Własne rozkazy|Own commands|Eigene Befehle)/i.test(headTxt)) return 'own';
     return null;
   }
+  function addDirectButton() {
+    if ($('klin-direct')) return;
+    const a = document.querySelector('#send_troops');
+    const m = a && (a.getAttribute('href') || '').match(/target=(\d+)/);
+    const coords = infoVillageCoords();
+    const row = a && a.closest('tr');
+    if (!m || !coords || !row) return;
+    const tr = document.createElement('tr');
+    tr.innerHTML = '<td colspan="2"><a href="#" id="klin-direct"><b>⏱ Klin PRO: atakuj stąd – wioski i jednostki</b></a></td>';
+    row.parentNode.insertBefore(tr, row.nextSibling);
+    tr.querySelector('a').addEventListener('click', (e) => {
+      e.preventDefault();
+      startPlanner({ coords, t: null, targetId: m[1] });
+      setTimeout(() => { const b = $('klin-plan-box'); if (b && b.scrollIntoView) b.scrollIntoView({ block: 'start' }); }, 50);
+    });
+  }
   function addWedgeButtons() {
     const pageCoords = onInfo ? infoVillageCoords() : null;
     document.querySelectorAll('table').forEach((table) => {
@@ -568,6 +584,20 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
   //  PLAC: cel, podpowiedź, uczenie się, cofanie
   // =====================================================================
   let coordsDone = false, unitDone = false; // wypełniamy tylko raz na wczytanie strony – ręczne czyszczenie pól zostaje
+  function prefillDirect() {
+    const d = st.direct;
+    if (!d || d.ts < Date.now() - 5 * 60000 || String(d.vid) !== String(game_data.village.id) || findConfirm()) return;
+    const inp = $('unit_input_' + d.unit);
+    if (!inp) return;
+    let have = parseInt(inp.getAttribute('data-all-count'), 10);
+    if (!Number.isFinite(have)) { const e = $('units_entry_all_' + d.unit), m = e && e.textContent.match(/(\d+)/); have = m ? +m[1] : 0; }
+    if (have > 0 && !inp.value && !inp.disabled) {
+      inp.value = have;
+      ['input', 'change', 'keyup'].forEach((ev) => inp.dispatchEvent(new Event(ev, { bubbles: true })));
+    }
+    delete st.direct;
+    save();
+  }
   function prefillPlace() {
     const p = validPending();
     if (!p || p.t < now()) return;
@@ -787,9 +817,12 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
     }
     const say = (h) => { if (run === planRun) box.innerHTML = h; };
     const T = pend.t;
-    const head = `<b>⏱ Klin PRO – planowanie</b> <span class="far">wejście o ${fmtClock(T)} na (${esc(pend.coords)})</span>`;
+    const direct = !T; // tryb bezpośredni: atak na wioskę bez zadanej godziny – sam podgląd, z których wiosek i czym można zaatakować
+    const head = direct
+      ? `<b>⏱ Klin PRO – atak na (${esc(pend.coords)})</b> <span class="far">z których wiosek i czym możesz zaatakować</span>`
+      : `<b>⏱ Klin PRO – planowanie</b> <span class="far">wejście o ${fmtClock(T)} na (${esc(pend.coords)})</span>`;
     const fallback = `<a href="${gameUrl(game_data.village.id, 'place')}">przejdź na plac</a>`;
-    if (T < now() + 3000) { say(head + '<div class="row late">Ten czas już minął albo jest za blisko.</div>'); return; }
+    if (!direct && T < now() + 3000) { say(head + '<div class="row late">Ten czas już minął albo jest za blisko.</div>'); return; }
     say(head + '<div class="row">Pobieram dane świata i listę wiosek…</div>');
     try {
       const cfg = await loadSpeeds();
@@ -817,9 +850,48 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         save();
         location.href = gameUrl(vid, 'place');
       };
-      const canCofka = !!target && T - now() >= 8000;
+      const canCofka = !direct && !!target && T - now() >= 8000;
       const durOf = (r, u) => Math.round(r.dist * cfg.mpf[u] * 60 * st.speedK) * 1000;
       const mmss = (ms) => fmtLeft(Math.max(0, ms)).replace(/\.\d+$/, '');
+
+      const controls = (sel, minN, showLate) => {
+        let h = '<div class="row" style="margin-top:6px"><b>Jednostki:</b> ' + WEDGE_ORDER.map((u) =>
+          `<label style="margin-right:8px;white-space:nowrap"><input type="checkbox" form="klin-noform" data-pu="${u}" ${sel.includes(u) ? 'checked' : ''}> ${esc(UNIT_PL[u])}</label>`).join('') + '</div>';
+        h += '<div class="row">Zestawy: <a href="#" data-preset="def">🛡 obrona</a> · <a href="#" data-preset="off">⚔ wycięcie obrony</a> · <a href="#" data-preset="wall">🧱 mur (tarany / katapulty)</a> · <a href="#" data-preset="all">wszystkie</a>' +
+          ` &nbsp;|&nbsp; min. sztuk: <input type="number" form="klin-noform" id="klin-pmin" min="1" step="any" style="width:60px" value="${minN}">` +
+          ` &nbsp;|&nbsp; <label><input type="checkbox" form="klin-noform" id="klin-plate" ${showLate ? 'checked' : ''}> ${direct ? 'pokaż też wioski bez wybranych jednostek' : 'pokaż też wioski, które nie zdążą'}</label>` +
+          ' &nbsp;|&nbsp; <a href="#" id="klin-prefresh">przelicz teraz</a> · <a href="#" id="klin-preload">pobierz wojska od nowa</a></div>';
+        if (pend.targetId) {
+          h += '<div class="row">Wejście o (opcjonalnie): <input type="text" form="klin-noform" id="klin-dt" placeholder="hh:mm:ss:ms" style="width:110px" value="' + (direct ? '' : esc(fmtClock(T).replace(/ \(.*\)$/, ''))) + '"> ' +
+            '<a href="#" id="klin-dset">ustaw godzinę (klin)</a>' + (direct ? '' : ' · <a href="#" id="klin-dclr">bez godziny (sam podgląd)</a>') + '</div>';
+        }
+        return h;
+      };
+      const renderDirect = (sel, minN) => {
+        const n = now();
+        const rows = [], none = [];
+        V.forEach((r) => {
+          const opts = sel.filter((u) => (r.units[u] || 0) >= minN).map((u) => ({ u, dur: durOf(r, u), n: r.units[u] })).sort((a, b) => a.dur - b.dur);
+          if (opts.length) rows.push({ r, b: opts[0], alts: opts.slice(1) }); else none.push(r);
+        });
+        rows.sort((a, b) => a.b.dur - b.b.dur);
+        none.sort((a, b) => a.v.name.localeCompare(b.v.name, 'pl'));
+        let html = head + ` <span class="far">wioski: ${V.length}, skala marszu ×${st.speedK}</span>`;
+        html += controls(sel, minN, !!st.planLate);
+        html += `<div class="row"><b>${rows.length}</b> z ${V.length} wiosek ma wybrane jednostki (najszybsze na górze; „Atakuj” otwiera plac tej wioski z celem i wypełnionymi wojskami).</div>`;
+        const cells = rows.map((x) => {
+          const arr = n + x.b.dur;
+          return `<tr><td>${esc(x.r.v.name)}</td><td>${x.r.dist.toFixed(1)}</td><td>${esc(UNIT_PL[x.b.u] || x.b.u)} (${x.b.n})` +
+            (x.alts.length ? `<br><span class="far">też: ` + x.alts.map((a) => `<a href="#" data-v="${x.r.v.id}" data-u="${a.u}">${esc(UNIT_PL[a.u] || a.u)} (${a.n}) ${mmss(a.dur)}</a>`).join(', ') + '</span>' : '') +
+            `</td><td>${mmss(x.b.dur)}</td><td>${fmtClock(arr).replace(/:\d{3}/, '')}</td><td><a href="#" data-v="${x.r.v.id}">Atakuj</a></td></tr>`;
+        });
+        if (st.planLate) none.forEach((r) => cells.push(`<tr style="opacity:.6"><td>${esc(r.v.name)}</td><td>${r.dist.toFixed(1)}</td><td colspan="4" class="far">brak wybranych jednostek (min. ${minN} szt.)</td></tr>`));
+        html += cells.length
+          ? '<div style="max-height:420px;overflow:auto;margin-top:4px"><table class="vis" style="width:100%"><tr><th>Wioska</th><th>Pola</th><th>Jednostka</th><th>Marsz</th><th>Dojdzie (gdybyś wysłał teraz)</th><th></th></tr>' + cells.join('') + '</table></div>'
+          : '<div class="row late" style="margin-top:6px">Żadna wioska nie ma wybranych jednostek w wymaganej liczbie.</div>';
+        say(html);
+        wire(rows);
+      };
 
       const render = () => {
         if (run !== planRun) return;
@@ -827,6 +899,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         const avail = T - n - PLAN_MARGIN;
         const sel = (Array.isArray(st.planUnits) ? st.planUnits : WEDGE_ORDER).filter((u) => WEDGE_ORDER.includes(u));
         const minN = Math.max(1, Math.round(num(st.planMin, 1)));
+        if (direct) { renderDirect(sel, minN); return; }
         const okRows = [], lateRows = [], noneRows = [];
         V.forEach((r) => {
           const opts = sel.filter((u) => (r.units[u] || 0) >= minN).map((u) => ({ u, dur: durOf(r, u), n: r.units[u] }));
@@ -841,12 +914,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         const showLate = !!st.planLate;
 
         let html = head + ` <span class="far">wioski: ${V.length}, skala marszu ×${st.speedK}</span>`;
-        html += '<div class="row" style="margin-top:6px"><b>Jednostki:</b> ' + WEDGE_ORDER.map((u) =>
-          `<label style="margin-right:8px;white-space:nowrap"><input type="checkbox" form="klin-noform" data-pu="${u}" ${sel.includes(u) ? 'checked' : ''}> ${esc(UNIT_PL[u])}</label>`).join('') + '</div>';
-        html += '<div class="row">Zestawy: <a href="#" data-preset="def">🛡 obrona</a> · <a href="#" data-preset="off">⚔ wycięcie obrony</a> · <a href="#" data-preset="wall">🧱 mur (tarany / katapulty)</a> · <a href="#" data-preset="all">wszystkie</a>' +
-          ` &nbsp;|&nbsp; min. sztuk: <input type="number" form="klin-noform" id="klin-pmin" min="1" step="any" style="width:60px" value="${minN}">` +
-          ` &nbsp;|&nbsp; <label><input type="checkbox" form="klin-noform" id="klin-plate" ${showLate ? 'checked' : ''}> pokaż też wioski, które nie zdążą</label>` +
-          ' &nbsp;|&nbsp; <a href="#" id="klin-prefresh">przelicz teraz</a> · <a href="#" id="klin-preload">pobierz wojska od nowa</a></div>';
+        html += controls(sel, minN, showLate);
         html += `<div class="row"><b>Zdążą: ${okRows.length}</b> z ${V.length} wiosek (wybrane jednostki, zapas ${PLAN_MARGIN / 1000} s na wysłanie).</div>`;
 
         const unitCell = (x) => `${esc(UNIT_PL[x.b.u] || x.b.u)} (${x.b.n})` + (x.alts.length
@@ -898,8 +966,23 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
           const x = okRows.find((o) => String(o.r.v.id) === a.dataset.v);
           if (!x) return;
           const u = a.dataset.u || x.b.u;
+          if (direct) {
+            st.direct = { vid: x.r.v.id, unit: u, ts: Date.now() };
+            save();
+            location.href = gameUrl(x.r.v.id, 'place', 'target=' + pend.targetId);
+            return;
+          }
           go(x.r.v.id, { vid: x.r.v.id, unit: u, predDur: durOf(x.r, u) });
         }));
+        const dset = box.querySelector('#klin-dset');
+        if (dset) dset.addEventListener('click', (e) => {
+          e.preventDefault();
+          const t = parseClock(box.querySelector('#klin-dt').value, now());
+          if (t === null || t < now() + 3000) { alert('Podaj godzinę wejścia z przyszłości, np. 23:15:30:250.'); return; }
+          startPlanner(Object.assign({}, pend, { t }));
+        });
+        const dclr = box.querySelector('#klin-dclr');
+        if (dclr) dclr.addEventListener('click', (e) => { e.preventDefault(); startPlanner(Object.assign({}, pend, { t: null })); });
         const gc = box.querySelector('#klin-go-cofka');
         if (gc) gc.addEventListener('click', async (e) => {
           e.preventDefault();
@@ -1318,7 +1401,8 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
     const btn = findConfirm();
     if (btn) build(btn);
     if (/screen=(overview|info_village)/.test(location.search)) addWedgeButtons();
-    if (/screen=place/.test(location.search) && !btn) prefillPlace();
+    if (/screen=place/.test(location.search) && !btn) { prefillDirect(); prefillPlace(); }
+    if (onInfo) addDirectButton();
   }
 
   if (!/screen=info_command/.test(location.search)) cancelBanner();
