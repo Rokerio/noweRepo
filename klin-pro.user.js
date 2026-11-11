@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.14
+// @version      3.15
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.14',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.15',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -774,7 +774,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
   }
 
   let planRun = 0;
-  const PRESETS = { all: WEDGE_ORDER.slice(), def: ['spear', 'sword', 'archer', 'heavy'], off: ['axe', 'light', 'marcher', 'ram'] };
+  const PRESETS = { all: WEDGE_ORDER.slice(), def: ['spear', 'sword', 'archer', 'heavy'], off: ['axe', 'light', 'marcher', 'ram'], wall: ['ram', 'catapult'] };
   async function startPlanner(pend) {
     const run = ++planRun;
     let box = $('klin-plan-box');
@@ -843,7 +843,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         let html = head + ` <span class="far">wioski: ${V.length}, skala marszu ×${st.speedK}</span>`;
         html += '<div class="row" style="margin-top:6px"><b>Jednostki:</b> ' + WEDGE_ORDER.map((u) =>
           `<label style="margin-right:8px;white-space:nowrap"><input type="checkbox" form="klin-noform" data-pu="${u}" ${sel.includes(u) ? 'checked' : ''}> ${esc(UNIT_PL[u])}</label>`).join('') + '</div>';
-        html += '<div class="row">Zestawy: <a href="#" data-preset="def">🛡 obrona</a> · <a href="#" data-preset="off">⚔ wycięcie obrony</a> · <a href="#" data-preset="all">wszystkie</a>' +
+        html += '<div class="row">Zestawy: <a href="#" data-preset="def">🛡 obrona</a> · <a href="#" data-preset="off">⚔ wycięcie obrony</a> · <a href="#" data-preset="wall">🧱 mur (tarany / katapulty)</a> · <a href="#" data-preset="all">wszystkie</a>' +
           ` &nbsp;|&nbsp; min. sztuk: <input type="number" form="klin-noform" id="klin-pmin" min="1" step="any" style="width:60px" value="${minN}">` +
           ` &nbsp;|&nbsp; <label><input type="checkbox" form="klin-noform" id="klin-plate" ${showLate ? 'checked' : ''}> pokaż też wioski, które nie zdążą</label>` +
           ' &nbsp;|&nbsp; <a href="#" id="klin-prefresh">przelicz teraz</a> · <a href="#" id="klin-preload">pobierz wojska od nowa</a></div>';
