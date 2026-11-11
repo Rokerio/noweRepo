@@ -16,7 +16,7 @@ Skrypty do Tampermonkey / Violentmonkey. Kliknij link **Instaluj** – przegląd
 | Plemiona - nazwy Taxi / Bolt | 5.5 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-nazwy.user.js) |
 | Plemiona – Plemienny Poker podpowiedź | 1.5 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-poker-podpowiedz.user.js) |
 | Plemiona – Skaner defa offem (Dzienne + raporty) | 2.1 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/skaner-defa-offem.user.js) |
-| Plemiona – Strażnik planu ataku | 1.25 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js) |
+| Plemiona – Strażnik planu ataku | 1.26 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js) |
 | Plemiona – Zrzut źródła strony (do wklejenia Claude) | 1.1 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-zrzut-zrodla.user.js) |
 | Masowy Zbierak API (Plemiona) | 7.6 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/zbierak-api.user.js) |
 | Plemiona – Sprawdzacz skryptów (README vs to urządzenie) | 1.0.0 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/sprawdzacz-skryptow.user.js) |

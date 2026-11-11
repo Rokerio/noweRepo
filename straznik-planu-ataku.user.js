@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.25',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.26',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -24,7 +24,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   //  DOMYŚLNY PLAN (pl233, wejście 01.10 08:00–12:00)
   // =====================================================================
   const DEFAULT_WORLD = 'pl233';
-  const VER = '1.25';
+  const VER = '1.26';
   const PLAN_VER = 'all-29.10';
   const DEFAULT_PLAN = [
     { id: 1, type: 'Burzak', vil: 13391, tgt: 11488, units: 0, note: '25k na Kuźnia', from: '617|539', to: '422|583', start: '2026-10-29 05:02:56', end: '2026-10-29 09:02:56' },
@@ -338,6 +338,46 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   const curXY = (location.search.match(/[?&]x=(\d+)/) && location.search.match(/[?&]y=(\d+)/)) ? location.search.match(/[?&]x=(\d+)/)[1] + '|' + location.search.match(/[?&]y=(\d+)/)[1] : '';
 
   let impOpen = false;
+  // ---- Synchronizacja z grą: lista wysłanych rozkazów jest wspólna dla wszystkich urządzeń ----
+  function parseCommands(doc) {
+    const rows = doc.querySelectorAll('#commands_table tr, tr.command-row');
+    const out = [];
+    rows.forEach(tr => {
+      const txt = tr.textContent.replace(/\s+/g, ' ');
+      if (/Powrót|Cofanie|Wsparcie dla|Powraca/i.test(txt)) return;
+      const c = txt.match(/\((\d{1,3}\|\d{1,3})\)/g);
+      if (!c || c.length < 2) return;
+      out.push({ to: c[0].slice(1, -1), from: c[1].slice(1, -1) });
+    });
+    return out;
+  }
+  function applyCommands(cmds) {
+    const used = new Set(); let marked = 0; const n = now();
+    store.plan.filter(a => !store.done[a.id]).sort((x, y) => toMs(x.start) - toMs(y.start)).forEach(a => {
+      const i = cmds.findIndex((c, k) => !used.has(k) && c.from === a.from && c.to === a.to);
+      if (i >= 0) { used.add(i); store.done[a.id] = n; marked++; }
+    });
+    store.syncAt = n; store.syncN = marked; save();
+    return marked;
+  }
+  let syncing = false;
+  async function syncSent(manual) {
+    if (syncing) return; syncing = true;
+    try {
+      let cmds;
+      if (/screen=overview_villages/.test(location.search) && /mode=commands/.test(location.search)) cmds = parseCommands(document);
+      else {
+        const r = await fetch(`/game.php?village=${game_data.village.id}&screen=overview_villages&mode=commands&type=attack&group=0&page=-1`, { credentials: 'same-origin' });
+        const html = await r.text();
+        cmds = parseCommands(new DOMParser().parseFromString(html, 'text/html'));
+      }
+      const m = applyCommands(cmds);
+      render();
+      if (manual && typeof UI !== 'undefined') UI.SuccessMessage(`Rozkazów w grze: ${cmds.length}, nowo odhaczono: ${m}.`, 4000);
+    } catch (e) { if (manual && typeof UI !== 'undefined') UI.InfoMessage('Nie udało się pobrać listy rozkazów.', 3000); }
+    syncing = false;
+  }
+
   function render() { if (impOpen) return; const sc = panel.scrollTop; renderInner(); panel.scrollTop = sc; }
   function renderInner() {
     const n = now();
@@ -385,6 +425,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
         ⚠️ <input type="number" id="pa-last" min="0" value="${store.lastMin}"> min przed zamknięciem
         <br><label><input type="checkbox" id="pa-foreign" ${store.showForeign ? 'checked' : ''}> pokaż też cudze wioski (${store.plan.filter(a => !mine(a)).length})</label>
         <br><label><input type="checkbox" id="pa-lockopt" ${store.lockOn ? 'checked' : ''}> blokuj „Wyślij” do początku okna (gdy zostało ≤10 min)</label>
+        <br><a href="#" id="pa-sync" class="btn" style="padding:1px 6px">🔄 sprawdź wysłane w grze</a> <span style="color:#666">${store.syncAt ? 'ost. ' + hm(store.syncAt) + ' (+' + (store.syncN || 0) + ')' : ''}</span>
         <br><a href="#" id="pa-imp">📋 wklej nowy plan (BBCode)</a> · <a href="#" id="pa-reset">wyczyść odhaczenia</a> · <a href="#" id="pa-test">test dźwięku</a>
         <div id="pa-impbox" style="display:none"><textarea placeholder="Wklej BBCode z planera (tabela lub lista „Wyślij FEJK/OFF/BURZAK”)"></textarea><button class="btn" id="pa-impgo">Wczytaj</button> <button class="btn" id="pa-impno">Anuluj</button></div>
       </div>`;
@@ -395,6 +436,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     if (t.closest('#pa-toggle')) return;
     if (t.closest('a.btn[href*="screen=place"]')) { const b = t.closest('a.btn'); try { sessionStorage.setItem('pa_try', JSON.stringify({ vil: +b.dataset.vil, ts: Date.now() })); } catch (e) { /* brak */ } store.collapsed = true; save(); return; }   // po wejściu na plac panel się zwija
     if (t.id === 'pa-clrtype') { e.preventDefault(); store.typeF = {}; save(); render(); return; }
+    if (t.id === 'pa-sync') { e.preventDefault(); syncSent(true); return; }
     if (t.id === 'pa-imp') { e.preventDefault(); impOpen = true; const b = panel.querySelector('#pa-impbox'); b.style.display = ''; const ta = b.querySelector('textarea'); ta.focus(); return; }
     if (t.id === 'pa-reset') { e.preventDefault(); if (confirm('Wyczyścić odhaczenia i alarmy?')) { store.done = {}; store.alerted = {}; save(); render(); } return; }
     if (t.id === 'pa-test') { e.preventDefault(); unlock(); alarm('open', { id: 0, type: 'Test', to: '-' }, 'Tak brzmi alarm otwarcia okna'); return; }
@@ -690,6 +732,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   }
   render();
   placeHints();
+  if (!store.syncAt || now() - store.syncAt > 60000) syncSent(false);   // auto: co najwyżej raz na minutę
+  setInterval(() => syncSent(false), 120000);
   setInterval(tick, 1000);
   let mt;
   new MutationObserver(recs => {
