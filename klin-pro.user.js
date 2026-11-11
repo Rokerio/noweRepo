@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.20
+// @version      3.21
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.20',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.21',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -608,6 +608,10 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
     const p = validPending();
     if (!p || p.t < now()) return;
     if (findConfirm()) return;
+    // nie ruszamy placu otwartego do czegoś innego (np. fejki z innego skryptu, adres z ?target=): wypełniamy tylko
+    // świeżo po kliknięciu w planerze (ts z go()) albo przy ponowieniu cofki
+    const hasRetry = st.retry && st.retry.ts > Date.now() - 20 * 60000 && String(st.retry.vid) === String(game_data.village.id);
+    if (!hasRetry && (!(p.ts > Date.now() - 3 * 60000) || /[?&]target=/.test(location.search))) return;
     const C = game_data.village.coord;
     const cofka = C === p.coords;
     let filled = false;
