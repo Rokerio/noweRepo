@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.16
+// @version      3.17
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.16',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.17',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -853,6 +853,18 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
       const canCofka = !direct && !!target && T - now() >= 8000;
       const durOf = (r, u) => Math.round(r.dist * cfg.mpf[u] * 60 * st.speedK) * 1000;
       const mmss = (ms) => fmtLeft(Math.max(0, ms)).replace(/\.\d+$/, '');
+      const clk = (ms) => fmtClock(ms).replace(/:\d{3}/, '');
+      // godziny dojścia liczone na żywo (co sekundę) dla KONKRETNEJ jednostki – data-dur to jej czas marszu
+      const liveT = (dur) => `<span class="klin-t" data-dur="${dur}">${clk(now() + dur)}</span>`;
+      const startLive = () => {
+        if (box._kl) clearInterval(box._kl);
+        box._kl = setInterval(() => {
+          if (!document.body.contains(box) || run !== planRun) { clearInterval(box._kl); return; }
+          const n = now();
+          box.querySelectorAll('.klin-t').forEach((el) => { el.textContent = clk(n + (+el.dataset.dur)); });
+          if (T) box.querySelectorAll('.klin-z').forEach((el) => { el.textContent = mmss(T - n - (+el.dataset.dur)); });
+        }, 1000);
+      };
 
       const controls = (sel, minN, showLate) => {
         let h = '<div class="row" style="margin-top:6px"><b>Jednostki:</b> ' + WEDGE_ORDER.map((u) =>
@@ -880,17 +892,17 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         html += controls(sel, minN, !!st.planLate);
         html += `<div class="row"><b>${rows.length}</b> z ${V.length} wiosek ma wybrane jednostki (najszybsze na górze; „Atakuj” otwiera plac tej wioski z celem i wypełnionymi wojskami).</div>`;
         const cells = rows.map((x) => {
-          const arr = n + x.b.dur;
           return `<tr><td>${esc(x.r.v.name)}</td><td>${x.r.dist.toFixed(1)}</td><td>${esc(UNIT_PL[x.b.u] || x.b.u)} (${x.b.n})` +
-            (x.alts.length ? `<br><span class="far">też: ` + x.alts.map((a) => `<a href="#" data-v="${x.r.v.id}" data-u="${a.u}">${esc(UNIT_PL[a.u] || a.u)} (${a.n}) ${mmss(a.dur)}</a>`).join(', ') + '</span>' : '') +
-            `</td><td>${mmss(x.b.dur)}</td><td>${fmtClock(arr).replace(/:\d{3}/, '')}</td><td><a href="#" data-v="${x.r.v.id}">Atakuj</a></td></tr>`;
+            (x.alts.length ? `<br><span class="far">też: ` + x.alts.map((a) => `<a href="#" data-v="${x.r.v.id}" data-u="${a.u}">${esc(UNIT_PL[a.u] || a.u)} (${a.n}) – marsz ${mmss(a.dur)}, dojdzie ${liveT(a.dur)}</a>`).join('<br>') + '</span>' : '') +
+            `</td><td>${mmss(x.b.dur)}</td><td><b>${esc(UNIT_PL[x.b.u] || x.b.u)}:</b> ${liveT(x.b.dur)}</td><td><a href="#" data-v="${x.r.v.id}">Atakuj (${esc(UNIT_PL[x.b.u] || x.b.u)})</a></td></tr>`;
         });
         if (st.planLate) none.forEach((r) => cells.push(`<tr style="opacity:.6"><td>${esc(r.v.name)}</td><td>${r.dist.toFixed(1)}</td><td colspan="4" class="far">brak wybranych jednostek (min. ${minN} szt.)</td></tr>`));
         html += cells.length
-          ? '<div style="max-height:420px;overflow:auto;margin-top:4px"><table class="vis" style="width:100%"><tr><th>Wioska</th><th>Pola</th><th>Jednostka</th><th>Marsz</th><th>Dojdzie (gdybyś wysłał teraz)</th><th></th></tr>' + cells.join('') + '</table></div>'
+          ? '<div style="max-height:420px;overflow:auto;margin-top:4px"><table class="vis" style="width:100%"><tr><th>Wioska</th><th>Pola</th><th>Jednostka</th><th>Marsz</th><th>Dojdzie (jednostka: godzina, gdybyś wysłał teraz)</th><th></th></tr>' + cells.join('') + '</table></div>'
           : '<div class="row late" style="margin-top:6px">Żadna wioska nie ma wybranych jednostek w wymaganej liczbie.</div>';
         say(html);
         wire(rows);
+        startLive();
       };
 
       const render = () => {
@@ -923,7 +935,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         okRows.forEach((x) => {
           const arr = n + x.b.dur;
           rowsHtml.push(`<tr><td>${esc(x.r.v.name)}</td><td>${unitCell(x)}</td><td>${mmss(x.b.dur)}</td><td>${fmtClock(T - x.b.dur).replace(/:\d{3}/, '')}</td>` +
-            `<td>✔ dojdzie ${fmtClock(arr).replace(/:\d{3}/, '')}, zapas ${mmss(T - arr)}</td><td><a href="#" data-v="${x.r.v.id}">Wybierz</a></td></tr>`);
+            `<td><b>${esc(UNIT_PL[x.b.u] || x.b.u)}:</b> ✔ dojdzie ${liveT(x.b.dur)}, zapas <span class="klin-z" data-dur="${x.b.dur}">${mmss(T - arr)}</span></td><td><a href="#" data-v="${x.r.v.id}">Wybierz</a></td></tr>`);
         });
         if (showLate) {
           lateRows.forEach((x) => {
@@ -945,6 +957,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
           : `<span class="far">${target ? 'Za mało czasu na klin z cofki.' : 'Wioska ratowana nie jest na liście twoich wiosek, klin z cofki niedostępny.'}</span>`) + '</div>';
         say(html);
         wire(okRows);
+        startLive();
       };
 
       const wire = (okRows) => {
