@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.18
+// @version      3.19
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.18',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.19',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -858,15 +858,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
       const clk = (ms) => fmtClock(ms).replace(/:\d{3}/, '');
       // godziny dojścia liczone na żywo (co sekundę) dla KONKRETNEJ jednostki – data-dur to jej czas marszu
       const liveT = (dur) => `<span class="klin-t" data-dur="${dur}">${clk(now() + dur)}</span>`;
-      const startLive = () => {
-        if (box._kl) clearInterval(box._kl);
-        box._kl = setInterval(() => {
-          if (!document.body.contains(box) || run !== planRun) { clearInterval(box._kl); return; }
-          const n = now();
-          box.querySelectorAll('.klin-t').forEach((el) => { el.textContent = clk(n + (+el.dataset.dur)); });
-          if (T) box.querySelectorAll('.klin-z').forEach((el) => { el.textContent = mmss(T - n - (+el.dataset.dur)); });
-        }, 1000);
-      };
+      const startLive = () => { if (box._kl) { clearInterval(box._kl); box._kl = null; } }; // godziny liczone przy renderze; odświeżasz przyciskiem „Odśwież godziny”
 
       const controls = (sel, minN, showLate) => {
         let h = '<div class="row" style="margin-top:6px"><b>Jednostki:</b> ' + WEDGE_ORDER.map((u) =>
@@ -874,7 +866,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         h += '<div class="row">Zestawy: <a href="#" data-preset="def">🛡 obrona</a> · <a href="#" data-preset="off">⚔ wycięcie obrony</a> · <a href="#" data-preset="wall">🧱 mur (tarany / katapulty)</a> · <a href="#" data-preset="all">wszystkie</a>' +
           ` &nbsp;|&nbsp; min. sztuk: <input type="number" form="klin-noform" id="klin-pmin" min="1" step="any" style="width:60px" value="${minN}">` +
           ` &nbsp;|&nbsp; <label><input type="checkbox" form="klin-noform" id="klin-plate" ${showLate ? 'checked' : ''}> ${direct ? 'pokaż też wioski bez wybranych jednostek' : 'pokaż też wioski, które nie zdążą'}</label>` +
-          ' &nbsp;|&nbsp; <a href="#" id="klin-prefresh">przelicz teraz</a> · <a href="#" id="klin-preload">pobierz wojska od nowa</a></div>';
+          ' &nbsp;|&nbsp; <a href="#" id="klin-prefresh"><b>⟳ Odśwież godziny</b></a> · <a href="#" id="klin-preload">pobierz wojska od nowa</a></div>';
         if (pend.targetId) {
           h += '<div class="row">Wejście o (opcjonalnie): <input type="text" form="klin-noform" id="klin-dt" placeholder="hh:mm:ss:ms" style="width:110px" value="' + (direct ? '' : esc(fmtClock(T).replace(/ \(.*\)$/, ''))) + '"> ' +
             '<a href="#" id="klin-dset">ustaw godzinę (klin)</a>' + (direct ? '' : ' · <a href="#" id="klin-dclr">bez godziny (sam podgląd)</a>') + '</div>';
