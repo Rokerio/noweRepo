@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.17
+// @version      3.18
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.17',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.18',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -587,14 +587,16 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
   function prefillDirect() {
     const d = st.direct;
     if (!d || d.ts < Date.now() - 5 * 60000 || String(d.vid) !== String(game_data.village.id) || findConfirm()) return;
-    const inp = $('unit_input_' + d.unit);
-    if (!inp) return;
-    let have = parseInt(inp.getAttribute('data-all-count'), 10);
-    if (!Number.isFinite(have)) { const e = $('units_entry_all_' + d.unit), m = e && e.textContent.match(/(\d+)/); have = m ? +m[1] : 0; }
-    if (have > 0 && !inp.value && !inp.disabled) {
-      inp.value = have;
-      ['input', 'change', 'keyup'].forEach((ev) => inp.dispatchEvent(new Event(ev, { bubbles: true })));
-    }
+    (d.units || [d.unit]).forEach((u) => {
+      const inp = $('unit_input_' + u);
+      if (!inp) return;
+      let have = parseInt(inp.getAttribute('data-all-count'), 10);
+      if (!Number.isFinite(have)) { const e = $('units_entry_all_' + u), m = e && e.textContent.match(/(\d+)/); have = m ? +m[1] : 0; }
+      if (have > 0 && !inp.value && !inp.disabled) {
+        inp.value = have;
+        ['input', 'change', 'keyup'].forEach((ev) => inp.dispatchEvent(new Event(ev, { bubbles: true })));
+      }
+    });
     delete st.direct;
     save();
   }
@@ -883,22 +885,23 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         const n = now();
         const rows = [], none = [];
         V.forEach((r) => {
-          const opts = sel.filter((u) => (r.units[u] || 0) >= minN).map((u) => ({ u, dur: durOf(r, u), n: r.units[u] })).sort((a, b) => a.dur - b.dur);
-          if (opts.length) rows.push({ r, b: opts[0], alts: opts.slice(1) }); else none.push(r);
+          const opts = sel.filter((u) => (r.units[u] || 0) >= minN).map((u) => ({ u, dur: durOf(r, u), n: r.units[u] })).sort((a, b) => b.dur - a.dur);
+          // b = NAJWOLNIEJSZA zaznaczona jednostka w wiosce – ona wyznacza czas dojścia, gdy wyślesz wszystkie zaznaczone razem
+          if (opts.length) rows.push({ r, b: opts[0], all: opts }); else none.push(r);
         });
         rows.sort((a, b) => a.b.dur - b.b.dur);
         none.sort((a, b) => a.v.name.localeCompare(b.v.name, 'pl'));
         let html = head + ` <span class="far">wioski: ${V.length}, skala marszu ×${st.speedK}</span>`;
         html += controls(sel, minN, !!st.planLate);
-        html += `<div class="row"><b>${rows.length}</b> z ${V.length} wiosek ma wybrane jednostki (najszybsze na górze; „Atakuj” otwiera plac tej wioski z celem i wypełnionymi wojskami).</div>`;
+        html += `<div class="row"><b>${rows.length}</b> z ${V.length} wiosek ma wybrane jednostki (czas liczony dla najwolniejszej zaznaczonej jednostki w wiosce; „Atakuj” otwiera plac z celem i wypełnia wszystkie te jednostki).</div>`;
         const cells = rows.map((x) => {
-          return `<tr><td>${esc(x.r.v.name)}</td><td>${x.r.dist.toFixed(1)}</td><td>${esc(UNIT_PL[x.b.u] || x.b.u)} (${x.b.n})` +
-            (x.alts.length ? `<br><span class="far">też: ` + x.alts.map((a) => `<a href="#" data-v="${x.r.v.id}" data-u="${a.u}">${esc(UNIT_PL[a.u] || a.u)} (${a.n}) – marsz ${mmss(a.dur)}, dojdzie ${liveT(a.dur)}</a>`).join('<br>') + '</span>' : '') +
-            `</td><td>${mmss(x.b.dur)}</td><td><b>${esc(UNIT_PL[x.b.u] || x.b.u)}:</b> ${liveT(x.b.dur)}</td><td><a href="#" data-v="${x.r.v.id}">Atakuj (${esc(UNIT_PL[x.b.u] || x.b.u)})</a></td></tr>`;
+          const nm = (o) => esc(UNIT_PL[o.u] || o.u);
+          return `<tr><td>${esc(x.r.v.name)}</td><td>${x.r.dist.toFixed(1)}</td><td>${x.all.map((o) => `${nm(o)} (${o.n})`).join(', ')}</td>` +
+            `<td>${mmss(x.b.dur)}</td><td><b>${nm(x.b)} (najwolniejsza):</b> ${liveT(x.b.dur)}</td><td><a href="#" data-v="${x.r.v.id}">Atakuj</a></td></tr>`;
         });
         if (st.planLate) none.forEach((r) => cells.push(`<tr style="opacity:.6"><td>${esc(r.v.name)}</td><td>${r.dist.toFixed(1)}</td><td colspan="4" class="far">brak wybranych jednostek (min. ${minN} szt.)</td></tr>`));
         html += cells.length
-          ? '<div style="max-height:420px;overflow:auto;margin-top:4px"><table class="vis" style="width:100%"><tr><th>Wioska</th><th>Pola</th><th>Jednostka</th><th>Marsz</th><th>Dojdzie (jednostka: godzina, gdybyś wysłał teraz)</th><th></th></tr>' + cells.join('') + '</table></div>'
+          ? '<div style="max-height:420px;overflow:auto;margin-top:4px"><table class="vis" style="width:100%"><tr><th>Wioska</th><th>Pola</th><th>Zaznaczone jednostki</th><th>Marsz</th><th>Dojdzie (najwolniejsza zaznaczona, gdybyś wysłał teraz)</th><th></th></tr>' + cells.join('') + '</table></div>'
           : '<div class="row late" style="margin-top:6px">Żadna wioska nie ma wybranych jednostek w wymaganej liczbie.</div>';
         say(html);
         wire(rows);
@@ -980,7 +983,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
           if (!x) return;
           const u = a.dataset.u || x.b.u;
           if (direct) {
-            st.direct = { vid: x.r.v.id, unit: u, ts: Date.now() };
+            st.direct = { vid: x.r.v.id, unit: u, units: x.all ? x.all.map((o) => o.u) : [u], ts: Date.now() };
             save();
             location.href = gameUrl(x.r.v.id, 'place', 'target=' + pend.targetId);
             return;

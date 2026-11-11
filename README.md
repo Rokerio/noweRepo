@@ -10,7 +10,7 @@ Skrypty do Tampermonkey / Violentmonkey. Kliknij link **Instaluj** – przegląd
 | Dysponent Grup – wysyłka | 1.2.2 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js) |
 | Plemiona - Giełda Premium: alarm + wypełniacz | 5.56 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/gielda-premium.user.js) |
 | Plemiona – Grupy flag (Zagroda / Surowce / Atak / Rekrutacja) | 1.0.1 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/grupy-flag.user.js) |
-| Plemiona – Klin PRO (normalny + z cofki, auto) | 3.17 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js) |
+| Plemiona – Klin PRO (normalny + z cofki, auto) | 3.18 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js) |
 | Plemiona – Obstawy + Stałki (masowe wsparcie) | 2.6 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/obstawy-stalki.user.js) |
 | Plemiona – statystyki gracza w dymku mapy | 2.10 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-mapa-statystyki.user.js) |
 | Plemiona - nazwy Taxi / Bolt | 5.5 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-nazwy.user.js) |
