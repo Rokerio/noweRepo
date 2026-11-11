@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.19
+// @version      3.20
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.19',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.20',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -584,8 +584,12 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
   //  PLAC: cel, podpowiedź, uczenie się, cofanie
   // =====================================================================
   let coordsDone = false, unitDone = false; // wypełniamy tylko raz na wczytanie strony – ręczne czyszczenie pól zostaje
+  let directDone = false;
   function prefillDirect() {
-    const d = st.direct;
+    if (directDone) return;
+    let d = st.direct;
+    const qu = (location.search.match(/[?&]klin_u=([a-z_,]+)/) || [])[1];
+    if (qu) d = { vid: game_data.village.id, units: qu.split(','), ts: Date.now() };
     if (!d || d.ts < Date.now() - 5 * 60000 || String(d.vid) !== String(game_data.village.id) || findConfirm()) return;
     (d.units || [d.unit]).forEach((u) => {
       const inp = $('unit_input_' + u);
@@ -597,8 +601,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
         ['input', 'change', 'keyup'].forEach((ev) => inp.dispatchEvent(new Event(ev, { bubbles: true })));
       }
     });
-    delete st.direct;
-    save();
+    directDone = true;
+    if (!qu) { delete st.direct; save(); }
   }
   function prefillPlace() {
     const p = validPending();
@@ -845,12 +849,14 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         V.push({ v, units, dist: Math.hypot(v.x - tx, v.y - ty) });
         if (!(allU && allU.map[v.id])) await sleep(120);
       }
+      // otwieranie placu: w tej samej karcie albo (zaznaczony check) w nowej – planer zostaje w starej
+      const openUrl = (url) => { if (st.planTab) window.open(url, '_blank'); else location.href = url; };
       const go = (vid, extra) => {
         st.pending = Object.assign({ coords: pend.coords, t: T, attack: pend.attack, attackUrl: pend.attackUrl, ts: Date.now() }, extra);
         st.last = null;
         st.retry = null;
         save();
-        location.href = gameUrl(vid, 'place');
+        openUrl(gameUrl(vid, 'place'));
       };
       const canCofka = !direct && !!target && T - now() >= 8000;
       const durOf = (r, u) => Math.round(r.dist * cfg.mpf[u] * 60 * st.speedK) * 1000;
@@ -866,6 +872,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         h += '<div class="row">Zestawy: <a href="#" data-preset="def">🛡 obrona</a> · <a href="#" data-preset="off">⚔ wycięcie obrony</a> · <a href="#" data-preset="wall">🧱 mur (tarany / katapulty)</a> · <a href="#" data-preset="all">wszystkie</a>' +
           ` &nbsp;|&nbsp; min. sztuk: <input type="number" form="klin-noform" id="klin-pmin" min="1" step="any" style="width:60px" value="${minN}">` +
           ` &nbsp;|&nbsp; <label><input type="checkbox" form="klin-noform" id="klin-plate" ${showLate ? 'checked' : ''}> ${direct ? 'pokaż też wioski bez wybranych jednostek' : 'pokaż też wioski, które nie zdążą'}</label>` +
+          ` &nbsp;|&nbsp; <label><input type="checkbox" form="klin-noform" id="klin-ptab" ${st.planTab ? 'checked' : ''}> otwieraj w nowej karcie</label>` +
           ' &nbsp;|&nbsp; <a href="#" id="klin-prefresh"><b>⟳ Odśwież godziny</b></a> · <a href="#" id="klin-preload">pobierz wojska od nowa</a></div>';
         if (pend.targetId) {
           h += '<div class="row">Wejście o (opcjonalnie): <input type="text" form="klin-noform" id="klin-dt" placeholder="hh:mm:ss:ms" style="width:110px" value="' + (direct ? '' : esc(fmtClock(T).replace(/ \(.*\)$/, ''))) + '"> ' +
@@ -965,6 +972,8 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         if (pm) pm.addEventListener('change', () => { st.planMin = Math.max(1, Math.round(num(pm.value, 1))); save(); render(); });
         const pl = box.querySelector('#klin-plate');
         if (pl) pl.addEventListener('change', () => { st.planLate = pl.checked; save(); render(); });
+        const pt = box.querySelector('#klin-ptab');
+        if (pt) pt.addEventListener('change', () => { st.planTab = pt.checked; save(); });
         const pr = box.querySelector('#klin-prefresh');
         if (pr) pr.addEventListener('click', (e) => { e.preventDefault(); render(); });
         const pw = box.querySelector('#klin-preload');
@@ -975,9 +984,11 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
           if (!x) return;
           const u = a.dataset.u || x.b.u;
           if (direct) {
-            st.direct = { vid: x.r.v.id, unit: u, units: x.all ? x.all.map((o) => o.u) : [u], ts: Date.now() };
+            const us = x.all ? x.all.map((o) => o.u) : [u];
+            st.direct = { vid: x.r.v.id, unit: u, units: us, ts: Date.now() };
             save();
-            location.href = gameUrl(x.r.v.id, 'place', 'target=' + pend.targetId);
+            // jednostki także w adresie, żeby wiele kart otwartych pod rząd nie nadpisywało sobie st.direct
+            openUrl(gameUrl(x.r.v.id, 'place', 'target=' + pend.targetId + '&klin_u=' + us.join(',')));
             return;
           }
           go(x.r.v.id, { vid: x.r.v.id, unit: u, predDur: durOf(x.r, u) });
