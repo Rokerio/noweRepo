@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.26',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.27',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -24,7 +24,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   //  DOMYŚLNY PLAN (pl233, wejście 01.10 08:00–12:00)
   // =====================================================================
   const DEFAULT_WORLD = 'pl233';
-  const VER = '1.26';
+  const VER = '1.27';
   const PLAN_VER = 'all-29.10';
   const DEFAULT_PLAN = [
     { id: 1, type: 'Burzak', vil: 13391, tgt: 11488, units: 0, note: '25k na Kuźnia', from: '617|539', to: '422|583', start: '2026-10-29 05:02:56', end: '2026-10-29 09:02:56' },
@@ -347,19 +347,104 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
       if (/Powrót|Cofanie|Wsparcie dla|Powraca/i.test(txt)) return;
       const c = txt.match(/\((\d{1,3}\|\d{1,3})\)/g);
       if (!c || c.length < 2) return;
-      out.push({ to: c[0].slice(1, -1), from: c[1].slice(1, -1) });
+      let land = 0;
+      const tm = tr.querySelector('span.timer[data-endtime], .timer[data-endtime]');
+      if (tm && +tm.dataset.endtime) land = +tm.dataset.endtime * 1000;
+      else { const m = tr.textContent.match(/(\d+):(\d{2}):(\d{2})\s*$/); if (m) land = now() + ((+m[1]) * 3600 + (+m[2]) * 60 + (+m[3])) * 1000; }
+      out.push({ to: c[0].slice(1, -1), from: c[1].slice(1, -1), land });
     });
     return out;
   }
   function applyCommands(cmds) {
     const used = new Set(); let marked = 0; const n = now();
-    store.plan.filter(a => !store.done[a.id]).sort((x, y) => toMs(x.start) - toMs(y.start)).forEach(a => {
+    store.land = store.land || {};
+    store.plan.slice().sort((x, y) => toMs(x.start) - toMs(y.start)).forEach(a => {
+      if (store.done[a.id] && store.land[a.id] && store.land[a.id] < n) return;   // już wylądował
       const i = cmds.findIndex((c, k) => !used.has(k) && c.from === a.from && c.to === a.to);
-      if (i >= 0) { used.add(i); store.done[a.id] = n; marked++; }
+      if (i < 0) return;
+      used.add(i);
+      if (cmds[i].land) store.land[a.id] = cmds[i].land;
+      if (!store.done[a.id]) { store.done[a.id] = n; marked++; }
     });
     store.syncAt = n; store.syncN = marked; save();
     return marked;
   }
+
+  // ---- Flagi i relikty wiosek źródłowych ----
+  const UNIT_PL = { pikinier: 'Pik', miecznik: 'Miecz', topornik: 'Topór', 'łucznik': 'Łucz', zwiadowca: 'Zwiad', 'lekki kawalerzysta': 'Lekka', 'łucznik na koniu': 'ŁnK', 'ciężki kawalerzysta': 'Ciężka', taran: 'Taran', katapulta: 'Kata', rycerz: 'Rycerz', szlachcic: 'Szlach' };
+  function relicAtk(raw) {
+    const stats = [raw.main_stat].concat(raw.sub_stats || []).filter(Boolean), out = [];
+    stats.forEach(st => {
+      const m = String(st.name || '').match(/^(.+?):\s*\+(\d+(?:[.,]\d+)?)%\s*siła\s+(w ataku i w obronie|napadu|obrony)/i);
+      if (m && m[3].toLowerCase() !== 'obrony') out.push({ u: UNIT_PL[m[1].trim().toLowerCase()] || m[1].trim(), v: parseFloat(m[2].replace(',', '.')) });
+    });
+    return out;
+  }
+  function extractRelics(html) {
+    const i = html.indexOf('RelicSystem.Inventory.init('); if (i < 0) return [];
+    const st = html.indexOf('[', i); let d = 0, q = false, e = false;
+    for (let j = st; j < html.length; j++) {
+      const c = html[j];
+      if (q) { if (e) e = false; else if (c === '\\') e = true; else if (c === '"') q = false; }
+      else if (c === '"') q = true; else if (c === '[') d++; else if (c === ']' && --d === 0) { try { return JSON.parse(html.slice(st, j + 1)); } catch (x) { return []; } }
+    }
+    return [];
+  }
+  async function loadInfo(force) {
+    const info = store.info || {};
+    if (!force && info.at && now() - info.at < 600000) return;
+    const gd = game_data.village.id, g = async q => (await fetch(`/game.php?village=${gd}&${q}`, { credentials: 'same-origin' })).text();
+    const P = h => new DOMParser().parseFromString(h, 'text/html');
+    const out = { at: now(), flags: {}, coords: {}, relics: [] };
+    try {
+      const tech = P(await g('screen=overview_villages&mode=tech&group=0&page=-1'));
+      tech.querySelectorAll('td.flag_info').forEach(td => {
+        const id = parseInt((td.id || '').replace('flag_info_', ''), 10), pr = td.querySelector('.flag_present');
+        if (!id || !pr || /display-none/.test(pr.className)) return;
+        const txt = (pr.querySelector('span') || pr).textContent.replace(/\s+/g, ' ').trim();
+        const m = txt.match(/([+-]?\d+(?:[.,]\d+)?)%\s*(.*)/); if (!m) return;
+        out.flags[id] = { pct: parseFloat(m[1].replace(',', '.')), atk: /siła ataku/i.test(txt), text: txt };
+      });
+      const prod = P(await g('screen=overview_villages&mode=prod&group=0&page=-1'));
+      prod.querySelectorAll('.quickedit-vn').forEach(vn => {
+        const id = +vn.getAttribute('data-id'), m = ((vn.querySelector('.quickedit-label') || vn).textContent || '').match(/\((\d+)\|(\d+)\)/);
+        if (id && m) { out.coords[id] = [+m[1], +m[2]]; store.own[id] = 1; delete store.foreign[id]; }
+      });
+      extractRelics(await g('screen=relic_system')).forEach(r => {
+        if (!r.village_id || r.locked_state || r.inactive_until) return;
+        const a = relicAtk(r); if (a.length) out.relics.push({ host: r.village_id, range: +r.range || 0, name: r.name, a });
+      });
+      store.info = out; save();
+    } catch (e) { /* zostaw stare dane */ }
+  }
+  // flaga ataku + relikty działające na wioskę (odległość do wioski z reliktem ≤ zasięg)
+  function villInfo(a) {
+    const info = store.info; if (!info || !info.at) return null;
+    const f = info.flags[a.vil];
+    const mm = String(a.from).split('|').map(Number);
+    const sum = {};
+    info.relics.forEach(r => {
+      const h = info.coords[r.host]; if (!h) return;
+      if (Math.hypot(h[0] - mm[0], h[1] - mm[1]) <= r.range + 1e-9) r.a.forEach(x => { sum[x.u] = (sum[x.u] || 0) + x.v; });
+    });
+    const rel = Object.keys(sum).map(u => ({ u, v: sum[u] })).sort((x, y) => y.v - x.v);
+    return { flag: f && f.atk ? f.pct : null, other: f && !f.atk ? f.text : '', rel };
+  }
+  function villLine(a) {
+    const vi = villInfo(a); if (!vi) return '';
+    const big = a.type === 'OFF' || a.type === 'Burzak';
+    const fl = vi.flag != null ? `<span style="color:#1a7a1a">🚩 +${vi.flag}% atak</span>` : `<span style="color:${big ? '#c40f00' : '#888'}"><b>🚩 brak flagi ataku</b>${vi.other ? ' (jest: ' + vi.other + ')' : ''}</span>`;
+    const rl = vi.rel.length ? `<span style="color:#1a7a1a">🏺 ${vi.rel.slice(0, 4).map(x => x.u + ' +' + Math.round(x.v * 10) / 10 + '%').join(', ')}${vi.rel.length > 4 ? ' …' : ''}</span>` : `<span style="color:${big ? '#c40f00' : '#888'}">🏺 brak reliktów ataku</span>`;
+    return `<br><small>${fl} · ${rl}</small>`;
+  }
+  // duże ataki (OFF), które już wyszły z wioski – odliczanie do wejścia
+  function landingHtml(n) {
+    const L = store.land || {};
+    const l = store.plan.filter(a => a.type === 'OFF' && store.done[a.id] && L[a.id] && L[a.id] > n - 30000).sort((x, y) => L[x.id] - L[y.id]).slice(0, 6);
+    if (!l.length) return '';
+    return `<div class="pa-ft" style="background:#fbe9c0"><b>🛬 Duże ataki w drodze:</b>` + l.map(a => { const left = L[a.id] - n; return `<br>#${a.id} OFF ${a.from} → ${a.to}: <b style="color:${left < 300000 ? '#c40f00' : '#333'}">${left > 0 ? 'wchodzi za ' + fmtLeft(left) : 'właśnie wchodzi'}</b> (${hm(L[a.id])})`; }).join('') + '</div>';
+  }
+
   let syncing = false;
   async function syncSent(manual) {
     if (syncing) return; syncing = true;
@@ -372,6 +457,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
         cmds = parseCommands(new DOMParser().parseFromString(html, 'text/html'));
       }
       const m = applyCommands(cmds);
+      await loadInfo(manual);
       render();
       if (manual && typeof UI !== 'undefined') UI.SuccessMessage(`Rozkazów w grze: ${cmds.length}, nowo odhaczono: ${m}.`, 4000);
     } catch (e) { if (manual && typeof UI !== 'undefined') UI.InfoMessage('Nie udało się pobrać listy rozkazów.', 3000); }
@@ -384,7 +470,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     const pending = store.plan.filter(a => mine(a) && !store.done[a.id] && n <= toMs(a.end));
     const openNow = pending.filter(a => n >= toMs(a.start));
     const head = `<div class="pa-hd" id="pa-toggle">⚔️ Plan ataku <span>${openNow.length ? '🟢 ' + openNow.length + ' do wysłania' : pending.length + ' w kolejce'} ${store.collapsed ? '▲' : '▼'}</span></div>`;
-    if (store.collapsed) { panel.innerHTML = head; return; }
+    const nearBig = store.plan.filter(a => a.type === 'OFF' && store.done[a.id] && store.land && store.land[a.id] > n && store.land[a.id] - n < 15 * 60000).length;
+    const head2 = head.replace('</span></div>', (nearBig ? ' · 🛬' + nearBig : '') + '</span></div>');
+    if (store.collapsed) { panel.innerHTML = head2; return; }
     const SOON = 10 * 60000;
     const showAll = !!store.showAll;
     const typeF = store.typeF || {};
@@ -405,7 +493,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
       return `<div class="pa-it pa-${st.k}${here}">
         <input type="checkbox" data-id="${a.id}" ${store.done[a.id] ? 'checked' : ''} title="Odhacz jako wysłane">
         <div class="pa-b"><b>#${a.id} ${a.type}</b> ${a.units ? a.units + ' ' : ''}<span>${a.from} → ${a.to}</span>
-          ${a.note ? `<br>🎯 ${a.note}` : ''}
+          ${a.note ? `<br>🎯 ${a.note}` : ''}${villLine(a)}
           <br>okno ${dayLbl(toMs(a.start))} ${hm(toMs(a.start))} – ${hm(toMs(a.end))}${dayLbl(toMs(a.end)) !== dayLbl(toMs(a.start)) ? ' (' + dayLbl(toMs(a.end)) + ')' : ''}
           <div class="pa-st">${st.txt}</div></div>
         ${st.k === 'done' ? '' : (mine(a) ? `<a class="btn" data-vil="${a.vil}" href="${sendUrl(a)}">Plac</a>` : `<a class="btn" data-vil="${a.vil}" href="${sendUrl(a)}" title="Wioska spoza Twojej listy – spróbuj" style="opacity:.5">cudza?</a>`)}
@@ -420,7 +508,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     const shown = store.plan.filter(vis).length;
     const flt0 = `<div class="pa-ft">Do wysłania: ${chips}${typeOn.length ? `<br>pokazuję ${shown} (${typeOn.join(' + ')}) · <a href="#" id="pa-clrtype">wszystkie typy</a>` : ''}</div>`;
     const flt = flt0 + `<div class="pa-ft"><label><input type="checkbox" id="pa-all" ${showAll ? 'checked' : ''}> pokaż minione i późniejsze niż 10 min${showAll ? '' : ` (ukryte: ${hidden})`}</label></div>`;
-    panel.innerHTML = head + flt + (items || `<div class="pa-it">${store.plan.length ? 'Nic nie czeka w najbliższych 10 min.' : 'Brak planu – wklej BBCode poniżej.'}</div>`) + `
+    panel.innerHTML = head2 + landingHtml(n) + flt + (items || `<div class="pa-it">${store.plan.length ? 'Nic nie czeka w najbliższych 10 min.' : 'Brak planu – wklej BBCode poniżej.'}</div>`) + `
       <div class="pa-ft">🔔 alarm <input type="number" id="pa-warn" min="0" value="${store.warnMin}"> min przed otwarciem,
         ⚠️ <input type="number" id="pa-last" min="0" value="${store.lastMin}"> min przed zamknięciem
         <br><label><input type="checkbox" id="pa-foreign" ${store.showForeign ? 'checked' : ''}> pokaż też cudze wioski (${store.plan.filter(a => !mine(a)).length})</label>
@@ -633,7 +721,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     box.id = 'pa-hint';
     const st = status(a, now());
     const rest = store.plan.filter(o => o.id !== a.id && o.vil === a.vil && !store.done[o.id] && now() <= toMs(o.end));
-    box.innerHTML = `⚔️ <b>Plan #${a.id}: ${a.type}</b> ${a.from} → ${a.to}${a.units ? ` · ${a.units} jedn.` : ''}${a.note ? ` · 🎯 ${a.note}` : ''} · <b>${st.txt}</b>` +
+    box.innerHTML = `⚔️ <b>Plan #${a.id}: ${a.type}</b> ${a.from} → ${a.to}${a.units ? ` · ${a.units} jedn.` : ''}${a.note ? ` · 🎯 ${a.note}` : ''} · <b>${st.txt}</b>` + villLine(a) +
       (rest.length ? `<br>⚠️ Z tej wioski jeszcze ${rest.length}: ` + rest.map(o => `#${o.id} ${o.type}${o.type === 'OFF' ? ' (full)' : ''} do ${o.end.slice(11, 16)}`).join(', ') + ' – wojsko pod nie zostaje w rezerwie' : '') + `<div id="pa-msg">${fillMsg}</div>`;
     if (!box.parentElement) {
       const anchor = document.querySelector('#command-data-form') || confirmBtn?.closest('form') || document.getElementById('content_value');
