@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.13
+// @version      3.14
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.13',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.14',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -774,6 +774,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
   }
 
   let planRun = 0;
+  const PRESETS = { all: WEDGE_ORDER.slice(), def: ['spear', 'sword', 'archer', 'heavy'], off: ['axe', 'light', 'marcher', 'ram'] };
   async function startPlanner(pend) {
     const run = ++planRun;
     let box = $('klin-plan-box');
@@ -798,8 +799,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
       if (!vill.length) throw new Error('nie znalazłem listy wiosek');
       const target = vill.find((v) => v.coords === pend.coords);
       const [tx, ty] = pend.coords.split('|').map(Number);
-      const rows = [];
-      let checked = 0;
+      const V = []; // wszystkie własne wioski (poza ratowaną) z wojskami "w wiosce"
       for (let i = 0; i < vill.length; i++) {
         if (run !== planRun) return;
         const v = vill[i];
@@ -807,74 +807,123 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         say(head + `<div class="row">Sprawdzam wojska w wioskach… ${i + 1}/${vill.length}</div>`);
         let units;
         try { units = (allU && allU.map[v.id]) || await loadUnits(v.id); } catch (e) { continue; }
-        checked++;
-        const dist = Math.hypot(v.x - tx, v.y - ty);
-        const avail = T - now() - PLAN_MARGIN;
-        // wszystkie jednostki, które zdążą; domyślnie najwolniejsza (szybkie zostają na inne klinie)
-        const opts = [];
-        for (const u of WEDGE_ORDER) {
-          if (!(units[u] > 0)) continue;
-          const dur = Math.round(dist * cfg.mpf[u] * 60 * st.speedK) * 1000;
-          if (dur <= avail) opts.push({ u, dur, n: units[u] });
-        }
-        if (opts.length) {
-          opts.sort((a, b) => b.dur - a.dur);
-          const b = opts[0];
-          rows.push({ v, u: b.u, dist, dur: b.dur, S: T - b.dur, left: avail - b.dur, n: b.n, alts: opts.slice(1) });
-        }
+        V.push({ v, units, dist: Math.hypot(v.x - tx, v.y - ty) });
         if (!(allU && allU.map[v.id])) await sleep(120);
       }
-      rows.sort((a, b) => b.left - a.left);
-      const top = rows.slice(0, 10);
       const go = (vid, extra) => {
-        st.pending = Object.assign({ coords: pend.coords, t: T, attack: pend.attack, ts: Date.now() }, extra);
+        st.pending = Object.assign({ coords: pend.coords, t: T, attack: pend.attack, attackUrl: pend.attackUrl, ts: Date.now() }, extra);
         st.last = null;
         st.retry = null;
         save();
         location.href = gameUrl(vid, 'place');
       };
       const canCofka = !!target && T - now() >= 8000;
-      let html = head + ` <span class="far">sprawdzone wioski: ${checked}, skala marszu ×${st.speedK}</span>`;
-      if (top.length) {
-        html += '<table class="vis" style="margin-top:6px"><tr><th>Wioska</th><th>Jednostka</th><th>Marsz</th><th>Wyślij o</th><th>Zapas</th><th></th></tr>' +
-          top.map((r, i) => `<tr><td>${esc(r.v.name)}</td><td>${esc(UNIT_PL[r.u] || r.u)} (${r.n})` + (r.alts.length ? `<br><span class="far">też: ` + r.alts.map((x) => `<a href="#" data-i="${i}" data-u="${x.u}">${esc(UNIT_PL[x.u] || x.u)}</a>`).join(', ') + '</span>' : '') + `</td><td>${fmtLeft(r.dur).replace(/\.\d+$/, '')}</td>` +
-            `<td>${fmtClock(r.S).replace(/:\d{3}/, '')}</td><td>${Math.round(r.left / 1000)} s</td><td><a href="#" data-i="${i}">Wybierz</a></td></tr>`).join('') + '</table>';
-        if (rows.length > top.length) html += `<div class="far">…i ${rows.length - top.length} kolejnych wiosek, które też zdążą.</div>`;
-      } else {
-        html += `<div class="row late" style="margin-top:6px">Żadna wioska nie zdąży normalnym klinem (zapas ${PLAN_MARGIN / 1000} s na wysłanie).</div>`;
-      }
-      html += '<div class="row" style="margin-top:6px">' + (canCofka
-        ? `${top.length ? 'Albo: ' : '<b>Proponuję:</b> '}<a href="#" id="klin-go-cofka"><b>klin z cofki z wioski ratowanej (${esc(target.name)})</b></a>`
-        : `<span class="far">${target ? 'Za mało czasu na klin z cofki.' : 'Wioska ratowana nie jest na liście twoich wiosek, klin z cofki niedostępny.'}</span>`) + '</div>';
-      say(html);
-      if (run !== planRun) return;
-      box.querySelectorAll('a[data-i]').forEach((a) => a.addEventListener('click', (e) => {
-        e.preventDefault();
-        const r = top[Number(a.dataset.i)];
-        const alt = a.dataset.u ? r.alts.find((x) => x.u === a.dataset.u) : null;
-        go(r.v.id, { vid: r.v.id, unit: alt ? alt.u : r.u, predDur: alt ? alt.dur : r.dur });
-      }));
-      const gc = box.querySelector('#klin-go-cofka');
-      if (gc) gc.addEventListener('click', async (e) => {
-        e.preventDefault();
-        say(head + '<div class="row">Wybieram jednostkę i cel dla klina z cofki…</div>');
-        let units = {};
-        try { units = (allU && allU.map[target.id]) || await loadUnits(target.id); } catch (err) { /* bez wojsk */ }
-        const unit = WEDGE_ORDER.find((u) => units[u] > 0) || null;
-        const extra = { vid: target.id };
-        if (unit) {
-          // cel musi być na tyle daleko, żeby marsz trwał dłużej niż czas do cofnięcia (k s)
-          const kWant = Math.min(CANCEL_MAX_K, Math.floor((T - now() - MARGIN) / 2000));
-          const list = vill.filter((v) => v.id !== target.id)
-            .map((v) => ({ v, d: Math.round(Math.hypot(v.x - target.x, v.y - target.y) * cfg.mpf[unit] * 60 * st.speedK) * 1000 }))
-            .filter((x) => x.d >= 3000);
-          const enough = list.filter((x) => x.d >= (kWant + 2) * 1000).sort((a, b) => a.d - b.d)[0];
-          const pick = enough || list.sort((a, b) => b.d - a.d)[0];
-          extra.unit = unit;
-          if (pick) { extra.dest = pick.v.coords; extra.predDur = pick.d; }
+      const durOf = (r, u) => Math.round(r.dist * cfg.mpf[u] * 60 * st.speedK) * 1000;
+      const mmss = (ms) => fmtLeft(Math.max(0, ms)).replace(/\.\d+$/, '');
+
+      const render = () => {
+        if (run !== planRun) return;
+        const n = now();
+        const avail = T - n - PLAN_MARGIN;
+        const sel = (Array.isArray(st.planUnits) ? st.planUnits : WEDGE_ORDER).filter((u) => WEDGE_ORDER.includes(u));
+        const minN = Math.max(1, Math.round(num(st.planMin, 1)));
+        const okRows = [], lateRows = [], noneRows = [];
+        V.forEach((r) => {
+          const opts = sel.filter((u) => (r.units[u] || 0) >= minN).map((u) => ({ u, dur: durOf(r, u), n: r.units[u] }));
+          const good = opts.filter((o) => o.dur <= avail).sort((a, b) => b.dur - a.dur); // domyślnie najwolniejsza, która zdąży
+          if (good.length) okRows.push({ r, b: good[0], alts: good.slice(1), left: avail - good[0].dur });
+          else if (opts.length) { const f = opts.slice().sort((a, b) => a.dur - b.dur)[0]; lateRows.push({ r, b: f, alts: [], late: f.dur - (T - n) }); }
+          else noneRows.push({ r });
+        });
+        okRows.sort((a, b) => b.left - a.left);
+        lateRows.sort((a, b) => a.late - b.late);
+        noneRows.sort((a, b) => a.r.v.name.localeCompare(b.r.v.name, 'pl'));
+        const showLate = !!st.planLate;
+
+        let html = head + ` <span class="far">wioski: ${V.length}, skala marszu ×${st.speedK}</span>`;
+        html += '<div class="row" style="margin-top:6px"><b>Jednostki:</b> ' + WEDGE_ORDER.map((u) =>
+          `<label style="margin-right:8px;white-space:nowrap"><input type="checkbox" form="klin-noform" data-pu="${u}" ${sel.includes(u) ? 'checked' : ''}> ${esc(UNIT_PL[u])}</label>`).join('') + '</div>';
+        html += '<div class="row">Zestawy: <a href="#" data-preset="def">🛡 obrona</a> · <a href="#" data-preset="off">⚔ wycięcie obrony</a> · <a href="#" data-preset="all">wszystkie</a>' +
+          ` &nbsp;|&nbsp; min. sztuk: <input type="number" form="klin-noform" id="klin-pmin" min="1" step="any" style="width:60px" value="${minN}">` +
+          ` &nbsp;|&nbsp; <label><input type="checkbox" form="klin-noform" id="klin-plate" ${showLate ? 'checked' : ''}> pokaż też wioski, które nie zdążą</label>` +
+          ' &nbsp;|&nbsp; <a href="#" id="klin-prefresh">przelicz teraz</a> · <a href="#" id="klin-preload">pobierz wojska od nowa</a></div>';
+        html += `<div class="row"><b>Zdążą: ${okRows.length}</b> z ${V.length} wiosek (wybrane jednostki, zapas ${PLAN_MARGIN / 1000} s na wysłanie).</div>`;
+
+        const unitCell = (x) => `${esc(UNIT_PL[x.b.u] || x.b.u)} (${x.b.n})` + (x.alts.length
+          ? `<br><span class="far">też: ` + x.alts.map((a) => `<a href="#" data-v="${x.r.v.id}" data-u="${a.u}">${esc(UNIT_PL[a.u] || a.u)} (${a.n})</a>`).join(', ') + '</span>' : '');
+        const rowsHtml = [];
+        okRows.forEach((x) => {
+          const arr = n + x.b.dur;
+          rowsHtml.push(`<tr><td>${esc(x.r.v.name)}</td><td>${unitCell(x)}</td><td>${mmss(x.b.dur)}</td><td>${fmtClock(T - x.b.dur).replace(/:\d{3}/, '')}</td>` +
+            `<td>✔ dojdzie ${fmtClock(arr).replace(/:\d{3}/, '')}, zapas ${mmss(T - arr)}</td><td><a href="#" data-v="${x.r.v.id}">Wybierz</a></td></tr>`);
+        });
+        if (showLate) {
+          lateRows.forEach((x) => {
+            const arr = n + x.b.dur;
+            rowsHtml.push(`<tr style="opacity:.75"><td>${esc(x.r.v.name)}</td><td>${esc(UNIT_PL[x.b.u] || x.b.u)} (${x.b.n})</td><td>${mmss(x.b.dur)}</td><td>–</td>` +
+              `<td class="late">✖ dojdzie ${fmtClock(arr).replace(/:\d{3}/, '')}, spóźni się o ${mmss(x.late)}</td><td></td></tr>`);
+          });
+          noneRows.forEach((x) => {
+            rowsHtml.push(`<tr style="opacity:.6"><td>${esc(x.r.v.name)}</td><td colspan="5" class="far">brak wybranych jednostek (min. ${minN} szt.)</td></tr>`);
+          });
         }
-        go(target.id, extra);
-      });
+        if (rowsHtml.length) {
+          html += '<div style="max-height:420px;overflow:auto;margin-top:4px"><table class="vis" style="width:100%"><tr><th>Wioska</th><th>Jednostka</th><th>Marsz</th><th>Wyślij o</th><th>Gdybyś wysłał teraz</th><th></th></tr>' + rowsHtml.join('') + '</table></div>';
+        } else {
+          html += `<div class="row late" style="margin-top:6px">Żadna wioska nie zdąży normalnym klinem wybranymi jednostkami (zapas ${PLAN_MARGIN / 1000} s na wysłanie).</div>`;
+        }
+        html += '<div class="row" style="margin-top:6px">' + (canCofka
+          ? `${okRows.length ? 'Albo: ' : '<b>Proponuję:</b> '}<a href="#" id="klin-go-cofka"><b>klin z cofki z wioski ratowanej (${esc(target.name)})</b></a>`
+          : `<span class="far">${target ? 'Za mało czasu na klin z cofki.' : 'Wioska ratowana nie jest na liście twoich wiosek, klin z cofki niedostępny.'}</span>`) + '</div>';
+        say(html);
+        wire(okRows);
+      };
+
+      const wire = (okRows) => {
+        box.querySelectorAll('input[data-pu]').forEach((c) => c.addEventListener('change', () => {
+          st.planUnits = Array.from(box.querySelectorAll('input[data-pu]')).filter((x) => x.checked).map((x) => x.dataset.pu);
+          save(); render();
+        }));
+        box.querySelectorAll('a[data-preset]').forEach((a) => a.addEventListener('click', (e) => { e.preventDefault(); st.planUnits = PRESETS[a.dataset.preset].slice(); save(); render(); }));
+        const pm = box.querySelector('#klin-pmin');
+        if (pm) pm.addEventListener('change', () => { st.planMin = Math.max(1, Math.round(num(pm.value, 1))); save(); render(); });
+        const pl = box.querySelector('#klin-plate');
+        if (pl) pl.addEventListener('change', () => { st.planLate = pl.checked; save(); render(); });
+        const pr = box.querySelector('#klin-prefresh');
+        if (pr) pr.addEventListener('click', (e) => { e.preventDefault(); render(); });
+        const pw = box.querySelector('#klin-preload');
+        if (pw) pw.addEventListener('click', (e) => { e.preventDefault(); startPlanner(pend); });
+        box.querySelectorAll('a[data-v]').forEach((a) => a.addEventListener('click', (e) => {
+          e.preventDefault();
+          const x = okRows.find((o) => String(o.r.v.id) === a.dataset.v);
+          if (!x) return;
+          const u = a.dataset.u || x.b.u;
+          go(x.r.v.id, { vid: x.r.v.id, unit: u, predDur: durOf(x.r, u) });
+        }));
+        const gc = box.querySelector('#klin-go-cofka');
+        if (gc) gc.addEventListener('click', async (e) => {
+          e.preventDefault();
+          say(head + '<div class="row">Wybieram jednostkę i cel dla klina z cofki…</div>');
+          let units = {};
+          try { units = (allU && allU.map[target.id]) || await loadUnits(target.id); } catch (err) { /* bez wojsk */ }
+          const selU = (Array.isArray(st.planUnits) ? st.planUnits : WEDGE_ORDER).filter((u) => WEDGE_ORDER.includes(u));
+          const unit = WEDGE_ORDER.find((u) => selU.includes(u) && units[u] > 0) || WEDGE_ORDER.find((u) => units[u] > 0) || null;
+          const extra = { vid: target.id };
+          if (unit) {
+            // cel musi być na tyle daleko, żeby marsz trwał dłużej niż czas do cofnięcia (k s)
+            const kWant = Math.min(CANCEL_MAX_K, Math.floor((T - now() - MARGIN) / 2000));
+            const list = vill.filter((v) => v.id !== target.id)
+              .map((v) => ({ v, d: Math.round(Math.hypot(v.x - target.x, v.y - target.y) * cfg.mpf[unit] * 60 * st.speedK) * 1000 }))
+              .filter((x) => x.d >= 3000);
+            const enough = list.filter((x) => x.d >= (kWant + 2) * 1000).sort((a, b) => a.d - b.d)[0];
+            const pick = enough || list.sort((a, b) => b.d - a.d)[0];
+            extra.unit = unit;
+            if (pick) { extra.dest = pick.v.coords; extra.predDur = pick.d; }
+          }
+          go(target.id, extra);
+        });
+      };
+      render();
     } catch (e) {
       say(head + `<div class="row late">Nie udało się sprawdzić wojsk (${esc(e.message)}). Czas i cel są zapisane – ${fallback} i wybierz wioskę ręcznie.</div>`);
     }
