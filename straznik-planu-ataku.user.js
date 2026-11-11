@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.27',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.28',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -24,7 +24,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   //  DOMYŚLNY PLAN (pl233, wejście 01.10 08:00–12:00)
   // =====================================================================
   const DEFAULT_WORLD = 'pl233';
-  const VER = '1.27';
+  const VER = '1.28';
   const PLAN_VER = 'all-29.10';
   const DEFAULT_PLAN = [
     { id: 1, type: 'Burzak', vil: 13391, tgt: 11488, units: 0, note: '25k na Kuźnia', from: '617|539', to: '422|583', start: '2026-10-29 05:02:56', end: '2026-10-29 09:02:56' },
@@ -300,6 +300,20 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   const panel = document.createElement('div');
   panel.id = 'pa-panel';
   document.body.appendChild(panel);
+
+  // ---- Domyślnie schowany: w menu skryptów (Dok) jest tylko mały przycisk; klik pokazuje panel w stanie zwiniętym ----
+  const flag = document.createElement('button');
+  flag.id = 'pa-flag'; flag.type = 'button'; flag.textContent = '⚔ Plan';
+  flag.style.cssText = 'position:fixed;right:12px;bottom:190px;z-index:99998;padding:6px 10px;border:2px solid #7d510f;border-radius:5px;background:#c1a264;color:#3b2a0a;font:bold 12px Verdana,sans-serif;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,.35)';
+  document.body.appendChild(flag);
+  function applyShown() { panel.style.display = store.shown ? '' : 'none'; flag.title = store.shown ? 'Schowaj Strażnika' : 'Pokaż Strażnika (zwiniętego)'; flag.style.outline = store.shown ? '2px solid #2a6ecf' : ''; }
+  flag.addEventListener('click', () => {
+    store.shown = !store.shown;
+    if (store.shown) { store.collapsed = true; save(); }      // po pokazaniu zawsze zwinięty pasek
+    applyShown(); render();
+  });
+  store.shown = false;   // przy każdym wejściu na stronę panel jest schowany
+  applyShown();
 
   // pozycja: zapamiętana po przeciągnięciu za nagłówek (dwuklik na nagłówku = powrót do domyślnej)
   function applyPos() {
@@ -817,6 +831,11 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
       const soonest = open.reduce((x, y) => toMs(x.end) < toMs(y.end) ? x : y);
       document.title = `🟢 ${open.length} do wysłania (#${soonest.id} ${fmtLeft(toMs(soonest.end) - n)}) · ` + ORIG_TITLE;
     } else document.title = ORIG_TITLE;
+    // przycisk w Doku: licznik otwartych okien, zielony = do wysłania, czerwony = okno zamyka się niedługo
+    const urgent = open.some(a => toMs(a.end) - n <= store.lastMin * 60000);
+    flag.textContent = open.length ? '⚔ ' + open.length : '⚔ Plan';
+    flag.style.background = open.length ? (urgent ? '#a00' : '#2a7a2a') : '#c1a264';
+    flag.style.color = open.length ? '#fff' : '#3b2a0a';
   }
   render();
   placeHints();
