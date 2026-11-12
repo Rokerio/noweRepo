@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.4.1
+// @version      1.5.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.4.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.5.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -316,7 +316,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 
 	// ================= DZIENNIK WYSYŁEK =================
 	// Własna księga wysłanych transportów – gdy przegląd „Transporty” ich jeszcze nie pokaże, kolejne uruchomienie i tak je odejmie.
-	const LKEY = NS + '_ledger', LOG = NS + '_log';
+	const LKEY = NS + '_ledger', LOG = NS + '_log', RSKEY = NS + '_regsched_' + game_data.world;
 	const lsGet = key => { try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) { return []; } };
 	const lsSet = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ignore */ } };
 	function recordSend(s) {
@@ -325,6 +325,11 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		const l = lsGet(LKEY).filter(e => e.exp > now);
 		l.push({ to: s.to, res: s.res, exp: now + ttl });
 		lsSet(LKEY, l);
+		if (s.reg) {
+			const q = lsGet(RSKEY).filter(e => e.arr > now - 6 * 3600000);
+			q.push({ to: s.to, toName: s.toName, from: s.fromName, res: s.res, ts: now, arr: now + s.leg * 60000 });
+			lsSet(RSKEY, q.slice(-300));
+		}
 		const g = lsGet(LOG);
 		g.push({ ts: now, from: s.fromName, to: s.toName, res: s.res });
 		lsSet(LOG, g.slice(-100));
@@ -1394,6 +1399,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			const item = { target: reg.hub.id, name: reg.hub.name, v: reg.hub, need: vec, headroom: head, what: `🗺️ ${RES_PL[r].toLowerCase()} do centrali` };
 			const { sends } = allocate([item], donors, 'near', null);
 			sends.forEach(s => {
+				s.reg = true;
 				reg.sends.push(s); reg.got += s.res[r]; reg.left = Math.max(0, reg.need - reg.got);
 				const u = usedRes[s.from] || (usedRes[s.from] = [0, 0, 0]);
 				s.res.forEach((n, i) => { u[i] += n; });
@@ -1433,6 +1439,19 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			const h = x.hub, after = h.res[r] + h.inc[r] + x.got;
 			return `<tr class="row_b"><td>${vlink(h)}</td><td>${x.members.length}</td><td>${Math.round(100 * (h.res[r] + h.inc[r]) / h.cap)}% → <b>${Math.round(100 * after / h.cap)}%</b> <span class="grey">(${h.cap.toLocaleString('pl-PL')})</span></td><td>${x.got ? resSpan(r, x.got) : '<span class="grey">–</span>'}</td><td>${x.left >= S.carry ? '<span style="color:#a00">' + resSpan(r, x.left) + '</span>' : (x.need < S.carry ? '<span class="grey">już pełna</span>' : '<span style="color:#060">ok</span>')}</td></tr>`;
 		}).join('');
+		const hhmm = t => { const d = new Date(t), td = new Date(); const c = d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); return d.toDateString() === td.toDateString() ? c : d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' }) + ' ' + c; };
+		const nowT = Date.now();
+		const ev = lsGet(RSKEY).filter(e => e.arr > nowT - 3600000).map(e => ({ to: e.to, toName: e.toName, from: e.from, res: e.res, arr: e.arr, sent: true }))
+			.concat(rep.sends.map(s => ({ to: s.to, toName: s.toName, from: s.fromName, res: s.res, arr: nowT + s.leg * 60000, sent: false })));
+		const byHub = {};
+		ev.forEach(e => { (byHub[e.to] = byHub[e.to] || { name: e.toName, list: [] }).list.push(e); });
+		const schedRows = Object.keys(byHub).map(id => {
+			const h = byHub[id], l = h.list.sort((a, b) => a.arr - b.arr), last = l[l.length - 1], sum = l.reduce((a, e) => a + e.res[r], 0);
+			const state = l.every(e => e.sent) ? (last.arr <= nowT ? '✅ dotarło' : '🚚 w drodze') : (l.some(e => e.sent) ? '🚚 część w drodze, reszta w planie' : '🕓 plan (gdy wyślesz teraz)');
+			return { last: last.arr, html: `<tr class="row_a"><td>${esc(short(h.name))}</td><td>${l.length}</td><td>${resSpan(r, sum)}</td><td>${hhmm(l[0].arr)}</td><td><b>${hhmm(last.arr)}</b>${last.arr > nowT ? ' <span class="grey">(za ' + fmtMin((last.arr - nowT) / 60000) + ')</span>' : ''}</td><td>${state}</td></tr>` };
+		}).sort((a, b) => a.last - b.last).map(x => x.html).join('');
+		const schedHtml = schedRows ? `<h4>📅 Harmonogram zwózek</h4><table class="vis" style="width:100%"><tbody><tr><th>Centrala</th><th>Dostaw</th><th>Razem</th><th>Pierwsza</th><th>Wszystko będzie</th><th>Status</th></tr>${schedRows}</tbody></table>
+			<details><summary>Wszystkie dostawy wg godziny</summary><table class="vis" style="width:100%"><tbody>${ev.slice().sort((a, b) => a.arr - b.arr).map(e => `<tr class="row_b"><td>${hhmm(e.arr)}</td><td>${esc(short(e.from))} → ${esc(short(e.toName))}</td><td>${resSpan(r, e.res[r])}</td><td>${e.sent ? '🚚' : '🕓'}</td></tr>`).join('')}</tbody></table></details>` : '';
 		Dialog.show(NS, `
 			<h3>🗺️ Rejony – zwóz do centrali</h3>
 			<div style="max-height:75vh;overflow:auto;-webkit-overflow-scrolling:touch">
@@ -1450,6 +1469,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			${rep.sends.length ? `<p><a href="#" class="btn" id="${NS}_all">▶ Wyślij wszystko</a></p>
 				<table class="vis" id="${NS}_table" style="width:100%"><tbody><tr><th>Skąd → dokąd</th><th>Pól</th><th>Czas</th><th>Kupców</th><th>Surowce</th><th></th></tr>${rep.sends.map(rowHtml).join('')}</tbody></table>`
 				: `<table id="${NS}_table"><tbody></tbody></table><p>Nic do wysłania.</p>`}
+			${schedHtml}
 			<h4>Centrale</h4><table class="vis" style="width:100%"><tbody><tr><th>Centrala</th><th>Wiosek</th><th>${esc(RES_PL[r])} w centrali</th><th>Zwożę</th><th>Brakuje</th></tr>${regRows}</tbody></table>
 			</div>`);
 		const apply = () => {
