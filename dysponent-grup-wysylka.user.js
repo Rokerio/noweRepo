@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.5.0
+// @version      1.5.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.5.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.5.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -1435,9 +1435,25 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		plan = { sends: rep.sends }; lock = false; busy = false;
 		const when = new Date(regData.ts).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
 		const r = rep.r, merchants = rep.sends.reduce((a, s) => a + s.merchants, 0);
+		const mean = rep.gFill.reduce((a, x) => a + x, 0) / 3;
+		const order = [0, 1, 2].sort((a, b) => rep.gFill[a] - rep.gFill[b]);
+		const lackest = order[0], mostest = order[2];
+		const balHtml = `<p><b>Bilans konta:</b> ${order.slice().reverse().map(i => `${resSpan(i, 0).replace(/>[^<]*</, '>' + RES_PL[i].toLowerCase() + '<')} <b>${(rep.gFill[i] * 100).toFixed(1)}%</b> <span class="grey">(${(rep.gFill[i] - mean >= 0 ? '+' : '') + ((rep.gFill[i] - mean) * 100).toFixed(1)} pp od średniej)</span>`).join(' · ')}<br>
+			${(rep.gFill[mostest] - rep.gFill[lackest]) * 100 < 1 ? '<span style="color:#060">Surowce są wyrównane.</span>' : `<b>👉 Najbardziej brakuje: ${RES_PL[lackest].toLowerCase()}</b> (${(rep.gFill[lackest] * 100).toFixed(1)}%), najwięcej jest: ${RES_PL[mostest].toLowerCase()}. ${rep.sends.length ? '' : 'Centrale mają już ' + RES_PL[r].toLowerCase() + ', więc wymień u handlarza w centralach na ' + RES_PL[lackest].toLowerCase() + ' (podpowiedź w kolumnie „Wymień").'}`}</p>`;
+		const exch = h => {
+			const got = rep.regions.find(x => x.hub === h).got;
+			const fill = RES.map((_, i) => (h.res[i] + h.inc[i] + (i === r ? got : 0)) / h.cap);
+			const m = fill.reduce((a, x) => a + x, 0) / 3, hi = fill.indexOf(Math.max(...fill));
+			const ex = Math.floor((fill[hi] - m) * h.cap / 1000) * 1000;
+			const defs = RES.map((_, i) => i === hi ? 0 : Math.max(0, m - fill[i]) * h.cap), sd = defs.reduce((a, x) => a + x, 0);
+			if (ex < 1000 || sd < 1000) return '<span class="grey">–</span>';
+			const use = Math.min(ex, sd);
+			const parts = defs.map((d, i) => d > 0 ? resSpan(i, Math.floor(use * d / sd / 1000) * 1000) : '').filter(Boolean);
+			return parts.length ? `${esc(RES_PL[hi].toLowerCase())} → ${parts.join(' ')}` : '<span class="grey">–</span>';
+		};
 		const regRows = rep.regions.slice().sort((a, b) => b.need - a.need).map(x => {
 			const h = x.hub, after = h.res[r] + h.inc[r] + x.got;
-			return `<tr class="row_b"><td>${vlink(h)}</td><td>${x.members.length}</td><td>${Math.round(100 * (h.res[r] + h.inc[r]) / h.cap)}% → <b>${Math.round(100 * after / h.cap)}%</b> <span class="grey">(${h.cap.toLocaleString('pl-PL')})</span></td><td>${x.got ? resSpan(r, x.got) : '<span class="grey">–</span>'}</td><td>${x.left >= S.carry ? '<span style="color:#a00">' + resSpan(r, x.left) + '</span>' : (x.need < S.carry ? '<span class="grey">już pełna</span>' : '<span style="color:#060">ok</span>')}</td></tr>`;
+			return `<tr class="row_b"><td>${vlink(h)}</td><td>${x.members.length}</td><td>${Math.round(100 * (h.res[r] + h.inc[r]) / h.cap)}% → <b>${Math.round(100 * after / h.cap)}%</b> <span class="grey">(${h.cap.toLocaleString('pl-PL')})</span></td><td>${x.got ? resSpan(r, x.got) : '<span class="grey">–</span>'}</td><td>${exch(h)}</td><td>${x.left >= S.carry ? '<span style="color:#a00">' + resSpan(r, x.left) + '</span>' : (x.need < S.carry ? '<span class="grey">już pełna</span>' : '<span style="color:#060">ok</span>')}</td></tr>`;
 		}).join('');
 		const hhmm = t => { const d = new Date(t), td = new Date(); const c = d.toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }); return d.toDateString() === td.toDateString() ? c : d.toLocaleDateString('pl-PL', { day: '2-digit', month: '2-digit' }) + ' ' + c; };
 		const nowT = Date.now();
@@ -1464,13 +1480,14 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 				<label><input type="checkbox" id="${NS}_r_cross"${o.cross ? ' checked' : ''}> dobieraj też z sąsiednich rejonów</label>
 				<a href="#" class="btn" id="${NS}_r_calc">Przelicz</a> <a href="#" class="btn" id="${NS}_r_refetch">↻ Pobierz dane</a>
 			</td></tr></tbody></table>
+			${balHtml}
 			<p>Zwożę: <b>${RES_PL[r].toLowerCase()}</b> (na koncie ${rep.gFill.map((x, i) => RES_PL[i].toLowerCase() + ' ' + (x * 100).toFixed(1) + '%').join(' · ')}) · rejonów: <b>${rep.regions.length}</b>${rep.auto ? ' <span class="grey">(auto)</span>' : ''} · wysyłek: <b id="${NS}_left">${rep.sends.length}</b> · kupców: <b>${Math.round(merchants)}</b> · razem ${resSpan(r, rep.moved)}${rep.unmet >= S.carry ? ` · <span style="color:#a00">nadal brakuje centralom ${resSpan(r, rep.unmet)}</span>` : ''}<br>
 			<span class="grey">Centrala = wioska najbliżej środka rejonu (z dużym spichlerzem). Dawcy: najbliższe wioski, od najbliższej; każdy oddaje ${RES_PL[r].toLowerCase()} do ${o.keepPct}% swojego spichlerza, w pełnych tysiącach.</span></p>
 			${rep.sends.length ? `<p><a href="#" class="btn" id="${NS}_all">▶ Wyślij wszystko</a></p>
 				<table class="vis" id="${NS}_table" style="width:100%"><tbody><tr><th>Skąd → dokąd</th><th>Pól</th><th>Czas</th><th>Kupców</th><th>Surowce</th><th></th></tr>${rep.sends.map(rowHtml).join('')}</tbody></table>`
 				: `<table id="${NS}_table"><tbody></tbody></table><p>Nic do wysłania.</p>`}
 			${schedHtml}
-			<h4>Centrale</h4><table class="vis" style="width:100%"><tbody><tr><th>Centrala</th><th>Wiosek</th><th>${esc(RES_PL[r])} w centrali</th><th>Zwożę</th><th>Brakuje</th></tr>${regRows}</tbody></table>
+			<h4>Centrale</h4><table class="vis" style="width:100%"><tbody><tr><th>Centrala</th><th>Wiosek</th><th>${esc(RES_PL[r])} w centrali</th><th>Zwożę</th><th>Wymień</th><th>Brakuje</th></tr>${regRows}</tbody></table>
 			</div>`);
 		const apply = () => {
 			const g = (id, d, lo, hi) => { const v = Number($('#' + NS + id).val()); return isFinite(v) && v >= lo && v <= hi ? v : d; };
