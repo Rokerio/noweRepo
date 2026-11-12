@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.4.0
+// @version      1.4.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.4.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.4.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -1356,13 +1356,25 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 
 	// czysta logika (bez DOM)
 	function regionPlan(villages, incoming, o, skipSup) {
+		if (o.k > 0) return regionPlanK(villages, incoming, o, skipSup, Math.min(o.k, villages.length));
+		// auto: najwięcej rejonów (= najkrótsze trasy), przy których nadmiar wystarcza na napełnienie wszystkich central
+		let best = null;
+		for (let k = Math.max(1, Math.floor(villages.length / 3)); k >= 1; k--) {
+			const p = regionPlanK(villages, incoming, o, skipSup, k);
+			p.auto = true;
+			if (!best || p.unmet < best.unmet) best = p;
+			if (p.unmet < S.carry) { best = p; break; }
+		}
+		return best;
+	}
+	function regionPlanK(villages, incoming, o, skipSup, kForced) {
 		const carry = S.carry;
 		villages.forEach(v => { v.inc = incoming[v.id] || [0, 0, 0]; v.keepOwn = null; });
 		const tot = [0, 0, 0]; let capAll = 0;
 		villages.forEach(v => { RES.forEach((_, r) => { tot[r] += v.res[r] + v.inc[r]; }); capAll += v.cap; });
 		const gFill = tot.map(x => x / Math.max(1, capAll));
 		const r = o.res === 'auto' ? gFill.indexOf(Math.max(...gFill)) : Number(o.res);
-		const k = o.k > 0 ? Math.min(o.k, villages.length) : Math.max(1, Math.round(villages.length / 12));
+		const k = kForced;
 		const groups = kmeans(villages, k);
 		const regions = groups.map(g => {
 			const maxCap = Math.max(...g.map(v => v.cap));
@@ -1427,13 +1439,13 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			<p class="grey">Dane z ${when} · ${regData.villages.length} wiosek</p>
 			<table class="vis" style="width:100%"><tbody><tr class="row_b"><td>
 				Surowiec <select id="${NS}_r_res"><option value="auto"${o.res === 'auto' ? ' selected' : ''}>auto (najwyższy %)</option>${RES.map((_, i) => `<option value="${i}"${o.res === i ? ' selected' : ''}>${RES_PL[i].toLowerCase()}</option>`).join('')}</select> ·
-				rejonów <input type="number" id="${NS}_r_k" min="0" max="60" value="${o.k}" style="width:45px"> <span class="grey">(0 = auto, ~12 wiosek na rejon)</span><br>
+				rejonów <input type="number" id="${NS}_r_k" min="0" max="60" value="${o.k}" style="width:45px"> <span class="grey">(0 = auto: tyle, ile central da się napełnić nadmiarem)</span><br>
 				centrala do <input type="number" id="${NS}_r_fill" min="30" max="100" value="${o.fillPct}" style="width:45px">% ·
 				dawcy zostawiają <input type="number" id="${NS}_r_keep" min="0" max="90" value="${o.keepPct}" style="width:45px">% spichlerza ·
 				<label><input type="checkbox" id="${NS}_r_cross"${o.cross ? ' checked' : ''}> dobieraj też z sąsiednich rejonów</label>
 				<a href="#" class="btn" id="${NS}_r_calc">Przelicz</a> <a href="#" class="btn" id="${NS}_r_refetch">↻ Pobierz dane</a>
 			</td></tr></tbody></table>
-			<p>Zwożę: <b>${RES_PL[r].toLowerCase()}</b> (na koncie ${rep.gFill.map((x, i) => RES_PL[i].toLowerCase() + ' ' + (x * 100).toFixed(1) + '%').join(' · ')}) · rejonów: <b>${rep.regions.length}</b> · wysyłek: <b id="${NS}_left">${rep.sends.length}</b> · kupców: <b>${Math.round(merchants)}</b> · razem ${resSpan(r, rep.moved)}${rep.unmet >= S.carry ? ` · <span style="color:#a00">nadal brakuje centralom ${resSpan(r, rep.unmet)}</span>` : ''}<br>
+			<p>Zwożę: <b>${RES_PL[r].toLowerCase()}</b> (na koncie ${rep.gFill.map((x, i) => RES_PL[i].toLowerCase() + ' ' + (x * 100).toFixed(1) + '%').join(' · ')}) · rejonów: <b>${rep.regions.length}</b>${rep.auto ? ' <span class="grey">(auto)</span>' : ''} · wysyłek: <b id="${NS}_left">${rep.sends.length}</b> · kupców: <b>${Math.round(merchants)}</b> · razem ${resSpan(r, rep.moved)}${rep.unmet >= S.carry ? ` · <span style="color:#a00">nadal brakuje centralom ${resSpan(r, rep.unmet)}</span>` : ''}<br>
 			<span class="grey">Centrala = wioska najbliżej środka rejonu (z dużym spichlerzem). Dawcy: najbliższe wioski, od najbliższej; każdy oddaje ${RES_PL[r].toLowerCase()} do ${o.keepPct}% swojego spichlerza, w pełnych tysiącach.</span></p>
 			${rep.sends.length ? `<p><a href="#" class="btn" id="${NS}_all">▶ Wyślij wszystko</a></p>
 				<table class="vis" id="${NS}_table" style="width:100%"><tbody><tr><th>Skąd → dokąd</th><th>Pól</th><th>Czas</th><th>Kupców</th><th>Surowce</th><th></th></tr>${rep.sends.map(rowHtml).join('')}</tbody></table>`
