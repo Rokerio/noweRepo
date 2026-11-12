@@ -15,6 +15,7 @@ Skrypty do Tampermonkey / Violentmonkey. Kliknij link **Instaluj** – przegląd
 | Plemiona – statystyki gracza w dymku mapy | 2.10 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-mapa-statystyki.user.js) |
 | Plemiona - nazwy Taxi / Bolt | 5.5 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-nazwy.user.js) |
 | Plemiona – Plemienny Poker podpowiedź | 1.5 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-poker-podpowiedz.user.js) |
+| Plemiona – Relikty i flagi: planer rozmieszczenia (rekrutacja / atak / obrona) | 1.8.0 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js) |
 | Plemiona – Skaner defa offem (Dzienne + raporty) | 2.1 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/skaner-defa-offem.user.js) |
 | Plemiona – Strażnik planu ataku | 1.28 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js) |
 | Plemiona – Zrzut źródła strony (do wklejenia Claude) | 1.1 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-zrzut-zrodla.user.js) |
