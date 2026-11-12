@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.2.2
+// @version      1.3.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.2.2',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.3.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -63,7 +63,11 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			storageLevel: 30,						// docelowy poziom spichlerza
 			minDonorTraders: 50,					// dawca na budowę: min. kupców łącznie (0 = bez progu)
 			gameSpeed: 0,							// 0 = prędkość świata z konfiguracji gry; wpisz liczbę, jeśli skrypt źle ją odczyta
-			npcPP: 10								// koszt jednej umowy u handlarza (PP) wg okna gry
+			npcPP: 10,								// koszt jednej umowy u handlarza (PP) wg okna gry
+			npcNeedsMerchants: true,				// okno handlarza ogranicza kwotę do tego, co uniosą wolni kupcy (ustaw false, jeśli wymiana działa bez kupców)
+			mixTol: 4,								// miks surowców: dopuszczalny rozstrzał % zapełnienia między surowcami w wiosce (punkty proc.)
+			mixMin: 20000,							// miks: nie rób umów na mniej niż tyle surowca (10 PP się nie opłaca)
+			ppBudget: 300							// miks: maks. PP na jedno wykonanie planu (0 = bez limitu)
 		},
 		minCall: 1000,								// cel z mniejszym brakiem (suma) pomijamy
 		considerIncoming: true,						// odejmij surowce już jadące do celu
@@ -669,6 +673,13 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		$('#' + NS + '_failed tbody').append(row);
 	}
 
+	// wyrównanie roześle nadmiar jednego surowca wszędzie – ostrzeż, gdy miks na koncie jest mocno nierówny
+	function mixWarn(p) {
+		if (!p.sum || !p.sum.capAll) return '';
+		const f = p.sum.stockAll.map(x => x / p.sum.capAll), spread = (Math.max(...f) - Math.min(...f)) * 100;
+		if (spread <= 8) return '';
+		return `<b style="color:#a00">⚠ Miks surowców na koncie jest nierówny (${f.map((x, r) => RES_PL[r].toLowerCase() + ' ' + Math.round(x * 100) + '%').join(' · ')}).</b> Wyrównanie roześle nadmiar do wszystkich wiosek – najpierw wymień nadmiar u handlarza (🧠 Doradca → Miks surowców). `;
+	}
 	function showPlan() {
 		const p = plan;
 		const tot = [0, 1, 2].map(r => p.sends.reduce((a, s) => a + s.res[r], 0));
@@ -676,7 +687,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		const explain = p.mode === 'cost'
 			? `Zamawiam surowce na budowę: <b>${esc(p.cost.what)}</b> – koszt ${p.cost.cost.map((n, r) => resSpan(r, n)).join(' ')}, brakuje ${p.cost.lack.map((n, r) => resSpan(r, n)).join(' ')}${sum3(p.cost.inc) ? ', już w drodze ' + p.cost.inc.map((n, r) => resSpan(r, n)).join(' ') : ''}. Dawcy z małych wiosek (mniej niż ${S.minDonorTraders} kupców łącznie) nie oddają.`
 			: p.mode === 'eq'
-			? `Wyrównuję zapełnienie spichlerzy: ${p.eqInfo.map(e => `<b>${esc(e.name)}</b> (${e.n} wiosek, średnio ${e.ratio.map(x => Math.round(x * 100) + '%').join(' / ')})`).join('; ') || 'za mało wiosek w grupie'}. Wioski poniżej średniej dostają, powyżej oddają tylko nadwyżkę ponad średnią. Różnice poniżej ${Math.round(S.equalizeTol * 100)}% spichlerza pomijam.`
+			? `${mixWarn(p)}Wyrównuję zapełnienie spichlerzy: ${p.eqInfo.map(e => `<b>${esc(e.name)}</b> (${e.n} wiosek, średnio ${e.ratio.map(x => Math.round(x * 100) + '%').join(' / ')})`).join('; ') || 'za mało wiosek w grupie'}. Wioski poniżej średniej dostają, powyżej oddają tylko nadwyżkę ponad średnią. Różnice poniżej ${Math.round(S.equalizeTol * 100)}% spichlerza pomijam.`
 			: p.mode === 'next'
 			? `Każdej wiosce bez budowy zamawiam surowce na jej następny budynek (${S.nextBuild.strategy === 'priority' ? 'wg listy priorytetów' : 'najtańszy, na który ma miejsce w spichlerzu'}). Wioski z budową są pomijane, a te bez budowy nie oddają tego, co same wydadzą.`
 			: p.mode === 'fill'
@@ -925,9 +936,53 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		let o = {};
 		try { o = JSON.parse(localStorage.getItem(ADV_KEY) || 'null') || {}; } catch (e) { /* ignore */ }
 		const pick = (k, d, lo, hi) => { const v = Number(o[k]); return o[k] !== undefined && isFinite(v) && v >= lo && v <= hi ? v : d; };
-		return { lockH: pick('lockH', S.advisor.lockHours, 1, 96), riskH: pick('riskH', S.advisor.riskHours, 1, 96), keepPct: pick('keepPct', S.advisor.keepMerchantsPct, 0, 90) };
+		return { lockH: pick('lockH', S.advisor.lockHours, 1, 96), riskH: pick('riskH', S.advisor.riskHours, 1, 96), keepPct: pick('keepPct', S.advisor.keepMerchantsPct, 0, 90),
+			mixTol: pick('mixTol', S.advisor.mixTol, 0.5, 40), mixMin: pick('mixMin', S.advisor.mixMin, 1000, 1000000), ppBudget: pick('ppBudget', S.advisor.ppBudget, 0, 100000) };
 	}
 	const saveAdv = o => { try { localStorage.setItem(ADV_KEY, JSON.stringify(o)); } catch (e) { /* ignore */ } };
+
+	// ---- miks surowców: w każdej wiosce wymiana u handlarza (1:1) nadmiaru jednego surowca na braki pozostałych ----
+	// Cel: wszystkie trzy surowce mają w wiosce to samo % spichlerza (średnia z wioski), więc potem „Wyrównaj” rozsyła
+	// już po równo, a nie samą glinę. Wymiana jest lokalna i natychmiastowa – nie zużywa transportów między wioskami.
+	function mixPlan(villages, o0, freeM) {
+		const A = S.advisor, carry = S.carry;
+		const o = Object.assign({ mixTol: A.mixTol, mixMin: A.mixMin, ppBudget: A.ppBudget }, o0), tol = o.mixTol / 100;
+		const tot = [0, 0, 0]; let capAll = 0;
+		villages.forEach(v => { RES.forEach((_, r) => { tot[r] += v.res[r] + v.inc[r]; }); capAll += v.cap; });
+		const gFill = tot.map(x => x / Math.max(1, capAll));
+		const all = [];
+		let nOk = 0;
+		for (const v of villages) {
+			const cur = RES.map((_, r) => v.res[r] + v.inc[r]);
+			const fills = cur.map(x => x / v.cap);
+			if (Math.max(...fills) - Math.min(...fills) <= tol) { nOk++; continue; }
+			const m = (cur[0] + cur[1] + cur[2]) / 3;
+			const sell = [], buy = [];
+			RES.forEach((_, r) => {
+				const d = cur[r] - m;
+				if (d > 0) sell.push({ r, amt: Math.min(d, v.res[r]) });				// sprzedać można tylko to, co już jest w wiosce
+				else if (d < 0) buy.push({ r, amt: Math.min(-d, Math.max(0, v.cap - cur[r])) });
+			});
+			sell.sort((a, b) => b.amt - a.amt); buy.sort((a, b) => b.amt - a.amt);
+			const limit = A.npcNeedsMerchants ? Math.max(0, freeM(v)) * carry : Infinity;
+			while (sell.length && buy.length) {
+				const s_ = sell[0], b_ = buy[0], x = Math.min(s_.amt, b_.amt);
+				const a = floor1000(Math.min(x, limit));
+				if (a >= o.mixMin) all.push({ v, sell: s_.r, buy: b_.r, amount: a, pp: A.npcPP, done: false });
+				s_.amt -= x; b_.amt -= x;
+				if (s_.amt <= 0.5) sell.shift();
+				if (b_.amt <= 0.5) buy.shift();
+			}
+		}
+		all.sort((a, b) => b.amount - a.amount);
+		const deals = [], deferred = [];
+		let pp = 0;
+		for (const d of all) {
+			if (o.ppBudget > 0 && pp + d.pp > o.ppBudget) { deferred.push(d); continue; }
+			pp += d.pp; deals.push(d);
+		}
+		return { gFill, spread: (Math.max(...gFill) - Math.min(...gFill)) * 100, deals, deferred, pp, amount: deals.reduce((a, d) => a + d.amount, 0), nOk, nVillages: new Set(deals.map(d => d.v.id)).size };
+	}
 
 	// czysta logika – bez DOM; ctx: villages (z polami z loadProd + lv), incoming, costs, speed, opts {lockH, riskH, keepPct, order, skipSup}
 	function adviseCore(ctx) {
@@ -1039,6 +1094,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			addNpc(v, r, s, Math.min(left[r], room), 'przelewa się: ' + RES_PL[r].toLowerCase());
 		}
 
+		const mix = mixPlan(villages, opts, freeM);
+
 		// podsumowania
 		const tot = RES.map((_, r) => villages.reduce((a, v) => a + v.res[r], 0));
 		const capAll = villages.reduce((a, v) => a + v.cap, 0);
@@ -1046,7 +1103,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		donA.forEach(v => RES.forEach((_, r) => { if (exc.get(v.id)[r] > 0 && v.prod[r] > 0) refill.push(v.cap * (full - reliefTo) / v.prod[r]); }));
 		const med = median(refill);
 		return {
-			sends, npc, blocks, ready, notes, overV, donA, exc, out, got, tot, capAll,
+			sends, npc, mix, blocks, ready, notes, overV, donA, exc, out, got, tot, capAll,
 			suggestLock: med == null ? null : Math.max(4, Math.min(48, Math.round(med))),
 			noQueue: overV.filter(v => v.building === false && !(out[v.id] || { merch: 0 }).merch).map(v => v.name),
 			stats: { n: villages.length, over: overV.length, farm: blocks.filter(b => /Zagroda/.test(b.what)).length + ready.filter(x => /Zagroda/.test(x.what)).length, storage: blocks.filter(b => /Spichlerz/.test(b.what)).length + ready.filter(x => /Spichlerz/.test(x.what)).length }
@@ -1105,6 +1162,71 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 	const marketLink = v => `/game.php?village=${v.id}&screen=market&mode=other_offer${sitter}`;
 	const resList = a => a.map((n, r) => n ? resSpan(r, n) : '').join(' ');
 
+	// ---------- handlarz: wykonanie wymiany (formularz „Akceptuj” z Rynku > Handel, oferta „Handlarz”) ----------
+	function parseGameDataVillage(html) {
+		const k = 'TribalWars.updateGameData(', i = html.indexOf(k);
+		if (i < 0) return null;
+		const st = i + k.length;
+		let d = 0, j = st;
+		for (; j < html.length; j++) { const c = html[j]; if (c === '{') d++; else if (c === '}') { d--; if (!d) { j++; break; } } }
+		try { return (JSON.parse(html.slice(st, j)) || {}).village || null; } catch (e) { return null; }
+	}
+	// jedna umowa: pobiera stronę oferty, sprawdza stan, wysyła formularz i POTWIERDZA po zmianie stanów wioski
+	async function npcDeal(d) {
+		const html0 = await get(`/game.php?village=${d.v.id}&screen=market&mode=other_offer${sitter}`);
+		const form = inert(html0).find('#merchant_exchange_form')[0];
+		if (!form) throw new Error(`Nie widzę oferty handlarza w ${short(d.v.name)} (brak Rynku / konta premium?).`);
+		const before = parseGameDataVillage(html0);
+		if (!before) throw new Error('Nie odczytałem stanu wioski ze strony Rynku.');
+		const S_ = RES[d.sell], B_ = RES[d.buy];
+		// świeży stan: nie sprzedaj więcej niż jest i nie kupuj ponad spichlerz
+		const amount = floor1000(Math.min(d.amount, before[S_], before.storage_max - before[B_]));
+		if (amount < 1000) return { skip: true };
+		await sleep(S.sendDelay);
+		const html1 = await $.post(form.getAttribute('action'), { res_buy: B_, res_sell: S_, sell: amount });
+		const after = parseGameDataVillage(String(html1));
+		if (!after) return { ok: false, why: 'brak odpowiedzi z nowym stanem' };
+		const gain = after[B_] - before[B_], loss = before[S_] - after[S_];
+		return { ok: gain >= amount * 0.5 && loss >= amount * 0.5, gain, loss, amount, after };
+	}
+	let advMix = null, mixBusy = false;
+	async function runMix(list) {
+		if (mixBusy) return;
+		const todo = list.filter(d => !d.done);
+		if (!todo.length) return;
+		mixBusy = true;
+		const stat = t => $('#' + NS + '_mixstat').html(t);
+		let n = 0, pp = 0, stopped = '';
+		try {
+			for (const d of todo) {
+				stat(`💱 ${n + 1}/${todo.length}: ${esc(short(d.v.name))} – ${RES_PL[d.sell].toLowerCase()} → ${RES_PL[d.buy].toLowerCase()}…`);
+				let r;
+				try { r = await npcDeal(d); } catch (e) { stopped = e.message || String(e); break; }
+				if (r.skip) { d.done = true; $('#' + NS + '_mix_' + d.k).css('opacity', .4).find('.' + NS + '_mixgo').replaceWith('<span class="grey">pominięte</span>'); continue; }
+				if (!r.ok) { stopped = `nie potwierdzono wymiany w ${short(d.v.name)} (${r.why || `+${r.gain} / −${r.loss}`}). Sprawdź stan wioski i PP – dalej nie idę.`; break; }
+				d.done = true; n++; pp += d.pp;
+				d.v.res = [r.after.wood, r.after.stone, r.after.iron].map(Math.floor);
+				$('#' + NS + '_mix_' + d.k).css('opacity', .4).find('.' + NS + '_mixgo').replaceWith(`<span style="color:#060">✓ ${r.amount}</span>`);
+			}
+		} finally { mixBusy = false; }
+		stat(`${stopped ? '✖ ' + esc(stopped) + '<br>' : ''}Wymieniono: <b>${n}</b> umów (~${pp} PP). ${n ? '<a href="#" id="' + NS + '_mixre">Przelicz plan</a>' : ''}`);
+		$('#' + NS + '_mixre').on('click', e => { e.preventDefault(); renderAdvice(); });
+	}
+	function bindMix() {
+		$(document).off('click.' + NS + 'mix').on('click.' + NS + 'mix', '.' + NS + '_mixgo', function (e) {
+			e.preventDefault();
+			const d = advMix && advMix.deals[Number(this.getAttribute('data-i'))];
+			if (d) runMix([d]).catch(handleError);
+		}).on('click.' + NS + 'mix', '#' + NS + '_mixall', function (e) {
+			e.preventDefault();
+			if (!advMix) return;
+			const list = advMix.deals.filter(d => !d.done);
+			if (!list.length) return;
+			if (!confirm(`Wymienić u handlarza ${list.length} umów w ${new Set(list.map(d => d.v.id)).size} wioskach?\nKoszt: ok. ${list.length * S.advisor.npcPP} PP.\nSkrypt sprawdza każdą wymianę i zatrzyma się przy pierwszym problemie.`)) return;
+			runMix(list).catch(handleError);
+		});
+	}
+
 	function renderAdvice() {
 		const o = loadAdv(), sel = loadSel();
 		const rep = adviseCore(Object.assign({ opts: Object.assign({}, o, { order: sel.order, skipSup: sel.skipSup }) }, advData));
@@ -1122,6 +1244,10 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			return `<tr class="row_b"><td>${vlink(b.v)}</td><td>${esc(b.what.replace('🏗 ', ''))}</td><td>${resList(b.cost)}</td><td>${sum3(g) ? resList(g) : '<span class="grey">–</span>'}</td><td>${sum3(miss) ? '<span style="color:#a00">' + resList(miss) + '</span>' : '<span style="color:#060">ok</span>'}</td></tr>`;
 		}).join('');
 		const npcRows = rep.npc.map(n => `<tr class="row_b"><td>${vlink(n.v)}</td><td>sprzedaj ${resSpan(n.sell, n.amount)}</td><td>kup ${resList(RES.map((_, r) => r === n.buy ? n.amount : 0))}</td><td>${n.pp} PP</td><td class="grey">${esc(n.why)}</td><td><a href="${marketLink(n.v)}" class="btn">Handlarz</a></td></tr>`).join('');
+		const mx = rep.mix;
+		advMix = mx;
+		mx.deals.forEach((d, i) => { d.k = i; });
+		const mixRows = mx.deals.slice(0, 60).map((d, i) => `<tr class="row_b" id="${NS}_mix_${i}"><td>${vlink(d.v)}</td><td>${resSpan(d.sell, d.amount)}</td><td>→ ${resList(RES.map((_, r) => r === d.buy ? d.amount : 0))}</td><td>${d.pp} PP</td><td><a href="#" class="btn ${NS}_mixgo" data-i="${i}">Wymień</a></td></tr>`).join('');
 		const sugg = rep.suggestLock;
 		Dialog.show(NS, `
 			<h3>🧠 Doradca – wysyłka</h3>
@@ -1134,6 +1260,16 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 				przy dłuższej blokadzie zostaw <input type="number" id="${NS}_a_keep" min="0" max="90" value="${o.keepPct}" style="width:45px">% kupców
 				<a href="#" class="btn" id="${NS}_a_calc">Przelicz</a> <a href="#" class="btn" id="${NS}_a_refetch">↻ Pobierz dane</a>
 			</td></tr></tbody></table>
+			<h4>💱 Miks surowców (handlarz)</h4>
+			<p>Konto: ${RES.map((_, r) => RES_PL[r].toLowerCase() + ' <b>' + (mx.gFill[r] * 100).toFixed(1) + '%</b>').join(' · ')} – rozstrzał <b>${mx.spread.toFixed(1)} pp</b>${mx.spread <= o.mixTol ? ' <span style="color:#060">(w normie)</span>' : ''}.
+			Dopuszczalny rozstrzał w wiosce <input type="number" id="${NS}_a_mtol" min="0.5" max="40" step="0.5" value="${o.mixTol}" style="width:45px"> pp ·
+			min. umowa <input type="number" id="${NS}_a_mmin" min="1000" step="1000" value="${o.mixMin}" style="width:65px"> ·
+			budżet <input type="number" id="${NS}_a_mpp" min="0" step="10" value="${o.ppBudget}" style="width:55px"> PP (0 = bez limitu) <a href="#" class="btn" id="${NS}_a_calc2">Przelicz</a><br>
+			${mx.deals.length ? `Plan: <b>${mx.deals.length}</b> umów w ${mx.nVillages} wioskach, przerzut ~${mx.amount.toLocaleString('pl-PL')} surowca, koszt <b>${mx.pp} PP</b>${mx.deferred.length ? ` <span class="grey">(jeszcze ${mx.deferred.length} umów poza budżetem)</span>` : ''}.
+			<a href="#" class="btn" id="${NS}_mixall">💱 Wymień wszystko (${mx.pp} PP)</a>` : '<span class="grey">Nic do wymiany przy tych ustawieniach.</span>'}
+			<span id="${NS}_mixstat" class="grey"></span><br>
+			<span class="grey">Każda wioska zamienia swój nadmiar jednego surowca (1:1, natychmiast, bez transportów) na braki pozostałych, tak by wszystkie trzy miały to samo % spichlerza. Potem uruchom tryb <b>Wyrównaj</b> – roześle już po równo, a nie samą glinę. Skrypt sprawdza stan wioski po każdej umowie i przerywa przy problemie.</span></p>
+			${mx.deals.length ? `<table class="vis" style="width:100%"><tbody><tr><th>Wioska</th><th>Sprzedaj</th><th>Kup</th><th>Koszt</th><th></th></tr>${mixRows}</tbody></table>${mx.deals.length > 60 ? `<p class="grey">…i ${mx.deals.length - 60} kolejnych (użyj „Wymień wszystko”).</p>` : ''}` : ''}
 			<p><b>Podsumowanie:</b> przelewa się lub zagrożonych: <b>${st.over}</b> · zagroda pełna / spichlerz &lt; ${S.advisor.storageLevel}: <b>${rep.blocks.length + rep.ready.length}</b> (zagroda ${st.farm}, spichlerz ${st.storage}) · wysyłek: <b id="${NS}_left">${rep.sends.length}</b> · do wymiany u handlarza: <b>${rep.npc.length}</b><br>
 			<span class="grey">Stan wszystkich wiosek: ${RES.map((_, r) => resSpan(r, rep.tot[r]) + ' <span class="grey">' + Math.round(100 * rep.tot[r] / Math.max(1, rep.capAll / 1)) + '%</span>').join(' ')} (pojemność ${rep.capAll.toLocaleString('pl-PL')} na surowiec)</span></p>
 			${rep.sends.length ? `<p><a href="#" class="btn" id="${NS}_all">▶ Wyślij wszystko</a></p>
@@ -1147,7 +1283,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			${rep.npc.length ? `<h4>Handlarz (1:1, natychmiast, ${S.advisor.npcPP} PP za umowę)</h4><table class="vis" style="width:100%"><tbody><tr><th>Wioska</th><th>Sprzedaj</th><th>Kup</th><th>Koszt</th><th>Po co</th><th></th></tr>${npcRows}</tbody></table>
 				<p class="grey">Giełdy Premium nie proponuję (zwykle pełna). Kwotę wpisz w oknie handlarza; skrypt niczego sam nie wymienia, bo to kosztuje PP.</p>` : ''}
 			</div>`);
-		$('#' + NS + '_a_calc').on('click', e => { e.preventDefault(); applyAdvOpts(); renderAdvice(); });
+		$('#' + NS + '_a_calc, #' + NS + '_a_calc2').on('click', e => { e.preventDefault(); applyAdvOpts(); renderAdvice(); });
+		bindMix();
 		$('#' + NS + '_a_refetch').on('click', e => { e.preventDefault(); applyAdvOpts(); runAdvisor(true).catch(handleError); });
 		$('#' + NS + '_a_use').on('click', e => { e.preventDefault(); $('#' + NS + '_a_lock').val($(e.currentTarget).attr('data-v')); applyAdvOpts(); renderAdvice(); });
 		bindSend();
@@ -1155,7 +1292,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 	function applyAdvOpts() {
 		const g = (id, d, lo, hi) => { const v = Number($('#' + NS + id).val()); return isFinite(v) && v >= lo && v <= hi ? v : d; };
 		const o = loadAdv();
-		saveAdv({ lockH: g('_a_lock', o.lockH, 1, 96), riskH: g('_a_risk', o.riskH, 1, 96), keepPct: g('_a_keep', o.keepPct, 0, 90) });
+		saveAdv({ lockH: g('_a_lock', o.lockH, 1, 96), riskH: g('_a_risk', o.riskH, 1, 96), keepPct: g('_a_keep', o.keepPct, 0, 90),
+			mixTol: g('_a_mtol', o.mixTol, 0.5, 40), mixMin: g('_a_mmin', o.mixMin, 1000, 1000000), ppBudget: g('_a_mpp', o.ppBudget, 0, 100000) });
 	}
 	async function runAdvisor(refetch) {
 		if (!advData || refetch) advData = await advFetch();
@@ -1320,7 +1458,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		$('<a href="#" style="margin-left:8px">↓ pokaż</a>').on('click', e => { e.preventDefault(); row[0].scrollIntoView({ behavior: 'smooth', block: 'center' }); }).appendTo(bar);
 	}
 
-	if (typeof module !== 'undefined' && module.exports) module.exports = { adviseCore, allocate, prodPerHour, _render: d => { advData = d; renderAdvice(); } };
+	if (typeof module !== 'undefined' && module.exports) module.exports = { adviseCore, allocate, prodPerHour, mixPlan, npcDeal, _render: d => { advData = d; renderAdvice(); } };
 
 	try {
 		if (game_data.screen === 'market' && location.href.includes('mode=call')) initMarket();
