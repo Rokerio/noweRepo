@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.3.0
+// @version      1.4.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.3.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.4.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -889,8 +889,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			.on('click', e => { e.preventDefault(); try { showLauncherDialog(); } catch (ex) { handleError(ex); } });
 		const fb = favButtons('margin-left:6px');
 		const host = $('#content_value h2, #content_value h3').first();
-		const adv = advButton('margin-left:6px');
-		host.length ? host.after(btn, adv, ...fb) : $('#content_value').prepend(btn, adv, ...fb);
+		const adv = advButton('margin-left:6px'), reg = regButton();
+		host.length ? host.after(btn, adv, reg, ...fb) : $('#content_value').prepend(btn, adv, reg, ...fb);
 	}
 
 	// Rynek > Poproś o surowce: ta sama logika dla bieżącej wioski, z ostatnio zapisanymi ustawieniami (tryb, %, dawcy)
@@ -917,8 +917,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			return /Poproś o surowce|Request resources|Rohstoffe anfordern/i.test(this.value || $(this).text());
 		}).first();
 		const fb = favButtons();
-		if (gameBtn.length) gameBtn.before(btn, btnG, advButton(), ...fb);
-		else { const l = $('#village_list').first(); l.length ? l.before(btn, btnG, advButton(), ...fb) : $('#content_value').prepend(btn, btnG, advButton(), ...fb); }
+		if (gameBtn.length) gameBtn.before(btn, btnG, advButton(), regButton(), ...fb);
+		else { const l = $('#village_list').first(); l.length ? l.before(btn, btnG, advButton(), regButton(), ...fb) : $('#content_value').prepend(btn, btnG, advButton(), regButton(), ...fb); }
 	}
 
 	// ================= DORADCA =================
@@ -1309,6 +1309,160 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			});
 	}
 
+	// ================= REJONY: ZWÓZ NADMIARU DO CENTRALI =================
+	// Wioski dzielone są na rejony wg położenia (k-średnich po współrzędnych). W każdym rejonie centralą jest wioska
+	// najbliżej środka (spośród tych z dużym spichlerzem). Do centrali zwozimy z najbliższych wiosek surowiec, którego
+	// jest na koncie za dużo, aż centrala będzie miała X% spichlerza tego surowca – tam go potem wymieniasz u handlarza.
+	const REG_KEY = NS + '_reg_' + game_data.world;
+	function loadReg() {
+		let o = {};
+		try { o = JSON.parse(localStorage.getItem(REG_KEY) || 'null') || {}; } catch (e) { /* ignore */ }
+		const n = (k, d, lo, hi) => { const v = Number(o[k]); return o[k] !== undefined && isFinite(v) && v >= lo && v <= hi ? v : d; };
+		return { res: o.res === 'auto' || [0, 1, 2].includes(Number(o.res)) && o.res !== undefined && o.res !== 'auto' ? (o.res === 'auto' ? 'auto' : Number(o.res)) : 'auto',
+			k: n('k', 0, 0, 60), fillPct: n('fillPct', 90, 30, 100), keepPct: n('keepPct', 10, 0, 90), cross: typeof o.cross === 'boolean' ? o.cross : true };
+	}
+	const saveReg = o => { try { localStorage.setItem(REG_KEY, JSON.stringify(o)); } catch (e) { /* ignore */ } };
+
+	// k-średnich po współrzędnych; deterministyczne (start: najdalsze od siebie wioski)
+	function kmeans(vs, k) {
+		const n = vs.length;
+		if (k <= 1 || n <= 1) return [vs.slice()];
+		k = Math.min(k, n);
+		const cx = vs.reduce((a, v) => a + v.x, 0) / n, cy = vs.reduce((a, v) => a + v.y, 0) / n;
+		const d2 = (a, b) => (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y);
+		const first = vs.slice().sort((a, b) => d2(a, { x: cx, y: cy }) - d2(b, { x: cx, y: cy }) || a.id - b.id)[0];
+		let cs = [{ x: first.x, y: first.y }];
+		while (cs.length < k) {
+			let best = null, bd = -1;
+			for (const v of vs) { const d = Math.min(...cs.map(c => d2(v, c))); if (d > bd || (d === bd && best && v.id < best.id)) { bd = d; best = v; } }
+			cs.push({ x: best.x, y: best.y });
+		}
+		let asg = new Array(n).fill(0);
+		for (let it = 0; it < 30; it++) {
+			let moved = false;
+			vs.forEach((v, i) => {
+				let b = 0, bd = Infinity;
+				cs.forEach((c, ci) => { const d = d2(v, c); if (d < bd) { bd = d; b = ci; } });
+				if (asg[i] !== b) { asg[i] = b; moved = true; }
+			});
+			cs = cs.map((c, ci) => {
+				const m = vs.filter((_, i) => asg[i] === ci);
+				return m.length ? { x: m.reduce((a, v) => a + v.x, 0) / m.length, y: m.reduce((a, v) => a + v.y, 0) / m.length } : c;
+			});
+			if (!moved) break;
+		}
+		return cs.map((_, ci) => vs.filter((_, i) => asg[i] === ci)).filter(g => g.length);
+	}
+
+	// czysta logika (bez DOM)
+	function regionPlan(villages, incoming, o, skipSup) {
+		const carry = S.carry;
+		villages.forEach(v => { v.inc = incoming[v.id] || [0, 0, 0]; v.keepOwn = null; });
+		const tot = [0, 0, 0]; let capAll = 0;
+		villages.forEach(v => { RES.forEach((_, r) => { tot[r] += v.res[r] + v.inc[r]; }); capAll += v.cap; });
+		const gFill = tot.map(x => x / Math.max(1, capAll));
+		const r = o.res === 'auto' ? gFill.indexOf(Math.max(...gFill)) : Number(o.res);
+		const k = o.k > 0 ? Math.min(o.k, villages.length) : Math.max(1, Math.round(villages.length / 12));
+		const groups = kmeans(villages, k);
+		const regions = groups.map(g => {
+			const maxCap = Math.max(...g.map(v => v.cap));
+			const cand = g.filter(v => v.cap >= 0.8 * maxCap);
+			const hub = cand.slice().sort((a, b) => g.reduce((s, v) => s + dist(a, v), 0) - g.reduce((s, v) => s + dist(b, v), 0) || a.id - b.id)[0];
+			const need = floor1000(o.fillPct / 100 * hub.cap - hub.res[r] - hub.inc[r]);
+			return { hub, members: g, need, got: 0, left: need, sends: [] };
+		});
+		const hubIds = new Set(regions.map(x => x.hub.id));
+		const eligible = villages.filter(v => !hubIds.has(v.id) && v.tradersFree > S.tradersSafeguard && !(skipSup && sum3(v.inc) >= S.suppliedThreshold));
+		eligible.forEach(v => { v.keepOwn = RES.map((_, i) => i === r ? Math.floor(o.keepPct / 100 * v.cap) : v.res[i]); });
+		const usedRes = {}, usedM = {};
+		const take = (donors, reg) => {
+			const vec = RES.map((_, i) => i === r ? reg.left : 0);
+			if (vec[r] < carry || !donors.length) return;
+			const head = RES.map((_, i) => i === r ? Math.max(0, reg.hub.cap - reg.hub.res[r] - reg.hub.inc[r] - reg.got) : 0);
+			const item = { target: reg.hub.id, name: reg.hub.name, v: reg.hub, need: vec, headroom: head, what: `🗺️ ${RES_PL[r].toLowerCase()} do centrali` };
+			const { sends } = allocate([item], donors, 'near', null);
+			sends.forEach(s => {
+				reg.sends.push(s); reg.got += s.res[r]; reg.left = Math.max(0, reg.need - reg.got);
+				const u = usedRes[s.from] || (usedRes[s.from] = [0, 0, 0]);
+				s.res.forEach((n, i) => { u[i] += n; });
+				usedM[s.from] = (usedM[s.from] || 0) + s.merchants;
+			});
+		};
+		const rest = list => list.map(v => Object.assign({}, v, { res: v.res.map((n, i) => n - ((usedRes[v.id] || [0, 0, 0])[i])), tradersFree: v.tradersFree - (usedM[v.id] || 0) }));
+		// 1) z własnego rejonu
+		regions.forEach(reg => take(rest(eligible.filter(v => reg.members.includes(v))), reg));
+		// 2) brakujące – od najbliższych z pozostałych rejonów
+		if (o.cross) regions.filter(x => x.left >= carry).sort((a, b) => b.left - a.left).forEach(reg => take(rest(eligible), reg));
+		const sends = [].concat(...regions.map(x => x.sends));
+		sends.forEach((s, i) => { s.i = i; s.done = false; });
+		return { r, gFill, k: groups.length, regions, sends, moved: sends.reduce((a, s) => a + s.res[r], 0), unmet: regions.reduce((a, x) => a + x.left, 0) };
+	}
+
+	let regData = null;
+	async function regFetch() {
+		msg.info('Rejony: pobieram dane…', 3000);
+		const cur = currentGroupId();
+		let all = {};
+		try { all = await loadProd('0'); } finally { try { await get(ovUrl('prod', cur)); } catch (e) { /* ignore */ } }
+		const villages = Object.values(all);
+		if (!villages.length) throw new Error('Nie odczytałem przeglądu produkcji.');
+		let incoming = {};
+		try { incoming = await readIncomingPerVillage(); } catch (e) { msg.err('Nie udało się odczytać transportów przychodzących – liczę z dziennika wysyłek.', 5000); }
+		mergeLedger(incoming);
+		return { villages, incoming, ts: Date.now() };
+	}
+	function renderRegions() {
+		const o = loadReg(), sel = loadSel();
+		const rep = regionPlan(regData.villages, regData.incoming, o, sel.skipSup);
+		plan = { sends: rep.sends }; lock = false; busy = false;
+		const when = new Date(regData.ts).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+		const r = rep.r, merchants = rep.sends.reduce((a, s) => a + s.merchants, 0);
+		const regRows = rep.regions.slice().sort((a, b) => b.need - a.need).map(x => {
+			const h = x.hub, after = h.res[r] + h.inc[r] + x.got;
+			return `<tr class="row_b"><td>${vlink(h)}</td><td>${x.members.length}</td><td>${Math.round(100 * (h.res[r] + h.inc[r]) / h.cap)}% → <b>${Math.round(100 * after / h.cap)}%</b> <span class="grey">(${h.cap.toLocaleString('pl-PL')})</span></td><td>${x.got ? resSpan(r, x.got) : '<span class="grey">–</span>'}</td><td>${x.left >= S.carry ? '<span style="color:#a00">' + resSpan(r, x.left) + '</span>' : (x.need < S.carry ? '<span class="grey">już pełna</span>' : '<span style="color:#060">ok</span>')}</td></tr>`;
+		}).join('');
+		Dialog.show(NS, `
+			<h3>🗺️ Rejony – zwóz do centrali</h3>
+			<div style="max-height:75vh;overflow:auto;-webkit-overflow-scrolling:touch">
+			<p class="grey">Dane z ${when} · ${regData.villages.length} wiosek</p>
+			<table class="vis" style="width:100%"><tbody><tr class="row_b"><td>
+				Surowiec <select id="${NS}_r_res"><option value="auto"${o.res === 'auto' ? ' selected' : ''}>auto (najwyższy %)</option>${RES.map((_, i) => `<option value="${i}"${o.res === i ? ' selected' : ''}>${RES_PL[i].toLowerCase()}</option>`).join('')}</select> ·
+				rejonów <input type="number" id="${NS}_r_k" min="0" max="60" value="${o.k}" style="width:45px"> <span class="grey">(0 = auto, ~12 wiosek na rejon)</span><br>
+				centrala do <input type="number" id="${NS}_r_fill" min="30" max="100" value="${o.fillPct}" style="width:45px">% ·
+				dawcy zostawiają <input type="number" id="${NS}_r_keep" min="0" max="90" value="${o.keepPct}" style="width:45px">% spichlerza ·
+				<label><input type="checkbox" id="${NS}_r_cross"${o.cross ? ' checked' : ''}> dobieraj też z sąsiednich rejonów</label>
+				<a href="#" class="btn" id="${NS}_r_calc">Przelicz</a> <a href="#" class="btn" id="${NS}_r_refetch">↻ Pobierz dane</a>
+			</td></tr></tbody></table>
+			<p>Zwożę: <b>${RES_PL[r].toLowerCase()}</b> (na koncie ${rep.gFill.map((x, i) => RES_PL[i].toLowerCase() + ' ' + (x * 100).toFixed(1) + '%').join(' · ')}) · rejonów: <b>${rep.regions.length}</b> · wysyłek: <b id="${NS}_left">${rep.sends.length}</b> · kupców: <b>${Math.round(merchants)}</b> · razem ${resSpan(r, rep.moved)}${rep.unmet >= S.carry ? ` · <span style="color:#a00">nadal brakuje centralom ${resSpan(r, rep.unmet)}</span>` : ''}<br>
+			<span class="grey">Centrala = wioska najbliżej środka rejonu (z dużym spichlerzem). Dawcy: najbliższe wioski, od najbliższej; każdy oddaje ${RES_PL[r].toLowerCase()} do ${o.keepPct}% swojego spichlerza, w pełnych tysiącach.</span></p>
+			${rep.sends.length ? `<p><a href="#" class="btn" id="${NS}_all">▶ Wyślij wszystko</a></p>
+				<table class="vis" id="${NS}_table" style="width:100%"><tbody><tr><th>Skąd → dokąd</th><th>Pól</th><th>Czas</th><th>Kupców</th><th>Surowce</th><th></th></tr>${rep.sends.map(rowHtml).join('')}</tbody></table>`
+				: `<table id="${NS}_table"><tbody></tbody></table><p>Nic do wysłania.</p>`}
+			<h4>Centrale</h4><table class="vis" style="width:100%"><tbody><tr><th>Centrala</th><th>Wiosek</th><th>${esc(RES_PL[r])} w centrali</th><th>Zwożę</th><th>Brakuje</th></tr>${regRows}</tbody></table>
+			</div>`);
+		const apply = () => {
+			const g = (id, d, lo, hi) => { const v = Number($('#' + NS + id).val()); return isFinite(v) && v >= lo && v <= hi ? v : d; };
+			const rv = $('#' + NS + '_r_res').val();
+			saveReg({ res: rv === 'auto' ? 'auto' : Number(rv), k: g('_r_k', o.k, 0, 60), fillPct: g('_r_fill', o.fillPct, 30, 100), keepPct: g('_r_keep', o.keepPct, 0, 90), cross: $('#' + NS + '_r_cross').is(':checked') });
+		};
+		$('#' + NS + '_r_calc').on('click', e => { e.preventDefault(); apply(); renderRegions(); });
+		$('#' + NS + '_r_refetch').on('click', e => { e.preventDefault(); apply(); runRegions(true).catch(handleError); });
+		bindSend();
+	}
+	async function runRegions(refetch) {
+		if (!regData || refetch) regData = await regFetch();
+		renderRegions();
+	}
+	function regButton(style) {
+		return $(`<a href="#" class="btn ${NS}_regbtn" style="margin:4px 6px 4px 0;${style || ''}" title="Podziel wioski na rejony i zwieź nadmiar surowca do środkowych wiosek">🗺️ Rejony</a>`)
+			.on('click', e => {
+				e.preventDefault();
+				const b = $(e.currentTarget);
+				b.addClass('btn-disabled');
+				runRegions(true).catch(handleError).then(() => b.removeClass('btn-disabled'));
+			});
+	}
+
 	// ================= RATUSZ =================
 	// Przycisk 📦 przy budynku i „Następny z Menedżera”: brakujące na budowę surowce wysyłane są tak samo jak w pozostałych trybach
 	// (lista wysyłek, wiersz znika po kliknięciu). Dawcy wg ostatnio zapisanych ustawień okna „Dysponent – grupy”.
@@ -1458,7 +1612,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		$('<a href="#" style="margin-left:8px">↓ pokaż</a>').on('click', e => { e.preventDefault(); row[0].scrollIntoView({ behavior: 'smooth', block: 'center' }); }).appendTo(bar);
 	}
 
-	if (typeof module !== 'undefined' && module.exports) module.exports = { adviseCore, allocate, prodPerHour, mixPlan, npcDeal, _render: d => { advData = d; renderAdvice(); } };
+	if (typeof module !== 'undefined' && module.exports) module.exports = { adviseCore, allocate, prodPerHour, mixPlan, npcDeal, regionPlan, kmeans, _renderReg: d => { regData = d; renderRegions(); }, _render: d => { advData = d; renderAdvice(); } };
 
 	try {
 		if (game_data.screen === 'market' && location.href.includes('mode=call')) initMarket();
