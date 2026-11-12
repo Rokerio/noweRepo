@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.5.1
+// @version      1.6.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.5.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.6.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -316,7 +316,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 
 	// ================= DZIENNIK WYSYŁEK =================
 	// Własna księga wysłanych transportów – gdy przegląd „Transporty” ich jeszcze nie pokaże, kolejne uruchomienie i tak je odejmie.
-	const LKEY = NS + '_ledger', LOG = NS + '_log', RSKEY = NS + '_regsched_' + game_data.world;
+	const LKEY = NS + '_ledger', LOG = NS + '_log', RSKEY = NS + '_regsched_' + game_data.world, RGKEY = NS + '_regmap_' + game_data.world;
+	let lastCollect = null;
 	const lsGet = key => { try { return JSON.parse(localStorage.getItem(key) || '[]'); } catch (e) { return []; } };
 	const lsSet = (key, val) => { try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { /* ignore */ } };
 	function recordSend(s) {
@@ -326,6 +327,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		l.push({ to: s.to, res: s.res, exp: now + ttl });
 		lsSet(LKEY, l);
 		if (s.reg) {
+			if (lastCollect) { try { localStorage.setItem(RGKEY, JSON.stringify(lastCollect)); } catch (e) { /* ignore */ } }
 			const q = lsGet(RSKEY).filter(e => e.arr > now - 6 * 3600000);
 			q.push({ to: s.to, toName: s.toName, from: s.fromName, res: s.res, ts: now, arr: now + s.leg * 60000 });
 			lsSet(RSKEY, q.slice(-300));
@@ -1324,7 +1326,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		try { o = JSON.parse(localStorage.getItem(REG_KEY) || 'null') || {}; } catch (e) { /* ignore */ }
 		const n = (k, d, lo, hi) => { const v = Number(o[k]); return o[k] !== undefined && isFinite(v) && v >= lo && v <= hi ? v : d; };
 		return { res: o.res === 'auto' || [0, 1, 2].includes(Number(o.res)) && o.res !== undefined && o.res !== 'auto' ? (o.res === 'auto' ? 'auto' : Number(o.res)) : 'auto',
-			k: n('k', 0, 0, 60), fillPct: n('fillPct', 90, 30, 100), keepPct: n('keepPct', 10, 0, 90), cross: typeof o.cross === 'boolean' ? o.cross : true };
+			k: n('k', 0, 0, 60), fillPct: n('fillPct', 90, 30, 100), keepPct: n('keepPct', 10, 0, 90), cross: typeof o.cross === 'boolean' ? o.cross : true, mode: ['auto', 'collect', 'dist'].includes(o.mode) ? o.mode : 'auto' };
 	}
 	const saveReg = o => { try { localStorage.setItem(REG_KEY, JSON.stringify(o)); } catch (e) { /* ignore */ } };
 
@@ -1416,6 +1418,54 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		return { r, gFill, k: groups.length, regions, sends, moved: sends.reduce((a, s) => a + s.res[r], 0), unmet: regions.reduce((a, x) => a + x.left, 0) };
 	}
 
+	// Drugi etap: po wymianie u handlarza centrala rozsyła nadwyżki do wiosek swojego rejonu (do średniej rejonu).
+	function regionDist(villages, incoming, o) {
+		let saved = null;
+		try { saved = JSON.parse(localStorage.getItem(RGKEY) || 'null'); } catch (e) { /* ignore */ }
+		villages.forEach(v => { v.inc = incoming[v.id] || [0, 0, 0]; v.keepOwn = null; });
+		const byId = {}; villages.forEach(v => { byId[v.id] = v; });
+		let groups = [];
+		if (saved && saved.regions && saved.regions.length) groups = saved.regions.map(g => ({ hub: byId[g.hub], members: g.members.map(i => byId[i]).filter(Boolean) })).filter(g => g.hub && g.members.length);
+		const skipR = saved && saved.r !== undefined ? saved.r : -1;
+		if (!groups.length) {
+			const k = o.k > 0 ? Math.min(o.k, villages.length) : Math.max(1, Math.round(villages.length / 12));
+			groups = kmeans(villages, k).map(g => {
+				const mc = Math.max(...g.map(v => v.cap));
+				const hub = g.filter(v => v.cap >= 0.8 * mc).sort((a, b) => g.reduce((q, v) => q + dist(a, v), 0) - g.reduce((q, v) => q + dist(b, v), 0) || a.id - b.id)[0];
+				return { hub, members: g };
+			});
+		}
+		const regions = groups.map(g => {
+			const all = g.members.includes(g.hub) ? g.members : g.members.concat(g.hub);
+			const capSum = all.reduce((a, v) => a + v.cap, 0);
+			const mean = RES.map((_, i) => all.reduce((a, v) => a + v.res[i] + v.inc[i], 0) / Math.max(1, capSum));
+			const hub = g.hub;
+			hub.keepOwn = RES.map((_, i) => i === skipR ? hub.res[i] : Math.max(Math.ceil(mean[i] * hub.cap), Math.floor(o.keepPct / 100 * hub.cap)));
+			const items = all.filter(v => v.id !== hub.id).map(v => ({
+				target: v.id, name: v.name, v,
+				need: RES.map((_, i) => i === skipR ? 0 : floor1000(Math.max(0, mean[i] * v.cap - v.res[i] - v.inc[i]))),
+				headroom: RES.map((_, i) => Math.max(0, v.cap - v.res[i] - v.inc[i])), what: '🗺️ z centrali'
+			})).filter(it => it.need.some(n => n >= S.carry)).sort((a, b) => dist(a.v, hub) - dist(b.v, hub));
+			const out = items.length && hub.tradersFree > S.tradersSafeguard ? allocate(items, [hub], 'near', null).sends : [];
+			const gave = out.reduce((a, s) => a.map((n, i) => n + s.res[i]), [0, 0, 0]);
+			return { hub, members: all, mean, sends: out, gave, wanted: items.reduce((a, it) => a.map((n, i) => n + it.need[i]), [0, 0, 0]) };
+		});
+		const sends = [].concat(...regions.map(x => x.sends));
+		sends.forEach((s, i) => { s.i = i; s.done = false; });
+		const moved = sends.reduce((a, s) => a + sum3(s.res), 0);
+		return { mode: 'dist', skipR, regions, sends, moved, hasSaved: !!(saved && saved.regions) };
+	}
+	function distHtml(rep, when) {
+		const merchants = rep.sends.reduce((a, s) => a + s.merchants, 0);
+		const rows = rep.regions.slice().sort((a, b) => sum3(b.wanted) - sum3(a.wanted)).map(x => `<tr class="row_b"><td>${vlink(x.hub)}</td><td>${x.members.length}</td><td>${resList(x.gave)}</td><td>${sum3(x.wanted) - sum3(x.gave) >= S.carry ? '<span style="color:#a00">' + resList(x.wanted.map((n, i) => Math.max(0, n - x.gave[i]))) + '</span>' : '<span style="color:#060">ok</span>'}</td></tr>`).join('');
+		return `<p>Rozsyłam z central do wiosek rejonu, każdą do <b>średniego wypełnienia rejonu</b> (osobno dla każdego surowca)${rep.skipR >= 0 ? ', <b>bez ' + RES_PL[rep.skipR].toLowerCase() + '</b> (to zwoziłeś)' : ''}. Wysyłek: <b id="${NS}_left">${rep.sends.length}</b> · kupców: <b>${Math.round(merchants)}</b> · razem ${sum3(rep.sends.reduce((a, s) => a.concat([s]), []).reduce((a, s) => s.res.map((n, i) => n + a[i]), [0, 0, 0])).toLocaleString('pl-PL')}
+			${rep.hasSaved ? '' : '<br><span class="grey">Brak zapisanego podziału z zwózki – podzieliłem wioski na nowo.</span>'}</p>
+			${rep.sends.length ? `<p><a href="#" class="btn" id="${NS}_all">▶ Wyślij wszystko</a></p>
+				<table class="vis" id="${NS}_table" style="width:100%"><tbody><tr><th>Skąd → dokąd</th><th>Pól</th><th>Czas</th><th>Kupców</th><th>Surowce</th><th></th></tr>${rep.sends.map(rowHtml).join('')}</tbody></table>`
+				: `<table id="${NS}_table"><tbody></tbody></table><p>Nic do rozesłania – centrale nie mają nadwyżek ponad średnią rejonu (wymień u handlarza i otwórz ponownie).</p>`}
+			<h4>Centrale</h4><table class="vis" style="width:100%"><tbody><tr><th>Centrala</th><th>Wiosek</th><th>Rozsyła</th><th>Nadal brakuje</th></tr>${rows}</tbody></table>`;
+	}
+
 	let regData = null;
 	async function regFetch() {
 		msg.info('Rejony: pobieram dane…', 3000);
@@ -1431,9 +1481,36 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 	}
 	function renderRegions() {
 		const o = loadReg(), sel = loadSel();
-		const rep = regionPlan(regData.villages, regData.incoming, o, sel.skipSup);
+		let rep = null;
+		if (o.mode !== 'collect') { const d = regionDist(regData.villages, regData.incoming, o); if (o.mode === 'dist' || d.sends.length) rep = d; }
+		if (!rep) rep = regionPlan(regData.villages, regData.incoming, o, sel.skipSup);
 		plan = { sends: rep.sends }; lock = false; busy = false;
 		const when = new Date(regData.ts).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+		const modeSel = `Tryb <select id="${NS}_r_mode"><option value="auto"${o.mode === 'auto' ? ' selected' : ''}>auto (rozsyłaj, gdy są nadwyżki)</option><option value="collect"${o.mode === 'collect' ? ' selected' : ''}>zwóz do centrali</option><option value="dist"${o.mode === 'dist' ? ' selected' : ''}>rozsyłaj z centrali</option></select> · `;
+		const settings = `<table class="vis" style="width:100%"><tbody><tr class="row_b"><td>${modeSel}
+				Surowiec <select id="${NS}_r_res"><option value="auto"${o.res === 'auto' ? ' selected' : ''}>auto (najwyższy %)</option>${RES.map((_, i) => `<option value="${i}"${o.res === i ? ' selected' : ''}>${RES_PL[i].toLowerCase()}</option>`).join('')}</select> ·
+				rejonów <input type="number" id="${NS}_r_k" min="0" max="60" value="${o.k}" style="width:45px"> <span class="grey">(0 = auto)</span><br>
+				centrala do <input type="number" id="${NS}_r_fill" min="30" max="100" value="${o.fillPct}" style="width:45px">% ·
+				dawcy zostawiają <input type="number" id="${NS}_r_keep" min="0" max="90" value="${o.keepPct}" style="width:45px">% spichlerza ·
+				<label><input type="checkbox" id="${NS}_r_cross"${o.cross ? ' checked' : ''}> dobieraj też z sąsiednich rejonów</label>
+				<a href="#" class="btn" id="${NS}_r_calc">Przelicz</a> <a href="#" class="btn" id="${NS}_r_refetch">↻ Pobierz dane</a>
+			</td></tr></tbody></table>`;
+		const wire = () => {
+			const apply = () => {
+				const g = (id, d, lo, hi) => { const v = Number($('#' + NS + id).val()); return isFinite(v) && v >= lo && v <= hi ? v : d; };
+				const rv = $('#' + NS + '_r_res').val();
+				saveReg({ res: rv === 'auto' ? 'auto' : Number(rv), k: g('_r_k', o.k, 0, 60), fillPct: g('_r_fill', o.fillPct, 30, 100), keepPct: g('_r_keep', o.keepPct, 0, 90), cross: $('#' + NS + '_r_cross').is(':checked'), mode: $('#' + NS + '_r_mode').val() });
+			};
+			$('#' + NS + '_r_calc').on('click', e => { e.preventDefault(); apply(); renderRegions(); });
+			$('#' + NS + '_r_refetch').on('click', e => { e.preventDefault(); apply(); runRegions(true).catch(handleError); });
+			bindSend();
+		};
+		if (rep.mode === 'dist') {
+			Dialog.show(NS, `<h3>🗺️ Rejony – rozsyłka z central</h3><div style="max-height:75vh;overflow:auto;-webkit-overflow-scrolling:touch"><p class="grey">Dane z ${when} · ${regData.villages.length} wiosek</p>${settings}${distHtml(rep, when)}</div>`);
+			wire();
+			return;
+		}
+		lastCollect = { r: rep.r, regions: rep.regions.map(x => ({ hub: x.hub.id, members: x.members.map(v => v.id) })) };
 		const r = rep.r, merchants = rep.sends.reduce((a, s) => a + s.merchants, 0);
 		const mean = rep.gFill.reduce((a, x) => a + x, 0) / 3;
 		const order = [0, 1, 2].sort((a, b) => rep.gFill[a] - rep.gFill[b]);
@@ -1472,14 +1549,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			<h3>🗺️ Rejony – zwóz do centrali</h3>
 			<div style="max-height:75vh;overflow:auto;-webkit-overflow-scrolling:touch">
 			<p class="grey">Dane z ${when} · ${regData.villages.length} wiosek</p>
-			<table class="vis" style="width:100%"><tbody><tr class="row_b"><td>
-				Surowiec <select id="${NS}_r_res"><option value="auto"${o.res === 'auto' ? ' selected' : ''}>auto (najwyższy %)</option>${RES.map((_, i) => `<option value="${i}"${o.res === i ? ' selected' : ''}>${RES_PL[i].toLowerCase()}</option>`).join('')}</select> ·
-				rejonów <input type="number" id="${NS}_r_k" min="0" max="60" value="${o.k}" style="width:45px"> <span class="grey">(0 = auto: tyle, ile central da się napełnić nadmiarem)</span><br>
-				centrala do <input type="number" id="${NS}_r_fill" min="30" max="100" value="${o.fillPct}" style="width:45px">% ·
-				dawcy zostawiają <input type="number" id="${NS}_r_keep" min="0" max="90" value="${o.keepPct}" style="width:45px">% spichlerza ·
-				<label><input type="checkbox" id="${NS}_r_cross"${o.cross ? ' checked' : ''}> dobieraj też z sąsiednich rejonów</label>
-				<a href="#" class="btn" id="${NS}_r_calc">Przelicz</a> <a href="#" class="btn" id="${NS}_r_refetch">↻ Pobierz dane</a>
-			</td></tr></tbody></table>
+			${settings}
 			${balHtml}
 			<p>Zwożę: <b>${RES_PL[r].toLowerCase()}</b> (na koncie ${rep.gFill.map((x, i) => RES_PL[i].toLowerCase() + ' ' + (x * 100).toFixed(1) + '%').join(' · ')}) · rejonów: <b>${rep.regions.length}</b>${rep.auto ? ' <span class="grey">(auto)</span>' : ''} · wysyłek: <b id="${NS}_left">${rep.sends.length}</b> · kupców: <b>${Math.round(merchants)}</b> · razem ${resSpan(r, rep.moved)}${rep.unmet >= S.carry ? ` · <span style="color:#a00">nadal brakuje centralom ${resSpan(r, rep.unmet)}</span>` : ''}<br>
 			<span class="grey">Centrala = wioska najbliżej środka rejonu (z dużym spichlerzem). Dawcy: najbliższe wioski, od najbliższej; każdy oddaje ${RES_PL[r].toLowerCase()} do ${o.keepPct}% swojego spichlerza, w pełnych tysiącach.</span></p>
@@ -1489,14 +1559,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			${schedHtml}
 			<h4>Centrale</h4><table class="vis" style="width:100%"><tbody><tr><th>Centrala</th><th>Wiosek</th><th>${esc(RES_PL[r])} w centrali</th><th>Zwożę</th><th>Wymień</th><th>Brakuje</th></tr>${regRows}</tbody></table>
 			</div>`);
-		const apply = () => {
-			const g = (id, d, lo, hi) => { const v = Number($('#' + NS + id).val()); return isFinite(v) && v >= lo && v <= hi ? v : d; };
-			const rv = $('#' + NS + '_r_res').val();
-			saveReg({ res: rv === 'auto' ? 'auto' : Number(rv), k: g('_r_k', o.k, 0, 60), fillPct: g('_r_fill', o.fillPct, 30, 100), keepPct: g('_r_keep', o.keepPct, 0, 90), cross: $('#' + NS + '_r_cross').is(':checked') });
-		};
-		$('#' + NS + '_r_calc').on('click', e => { e.preventDefault(); apply(); renderRegions(); });
-		$('#' + NS + '_r_refetch').on('click', e => { e.preventDefault(); apply(); runRegions(true).catch(handleError); });
-		bindSend();
+		wire();
 	}
 	async function runRegions(refetch) {
 		if (!regData || refetch) regData = await regFetch();
