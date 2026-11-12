@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.6.0
+// @version      1.6.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.6.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.6.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -1448,7 +1448,13 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			})).filter(it => it.need.some(n => n >= S.carry)).sort((a, b) => dist(a.v, hub) - dist(b.v, hub));
 			const out = items.length && hub.tradersFree > S.tradersSafeguard ? allocate(items, [hub], 'near', null).sends : [];
 			const gave = out.reduce((a, s) => a.map((n, i) => n + s.res[i]), [0, 0, 0]);
-			return { hub, members: all, mean, sends: out, gave, wanted: items.reduce((a, it) => a.map((n, i) => n + it.need[i]), [0, 0, 0]) };
+			const wantedSum = items.reduce((a, it) => a + sum3(it.need), 0), gaveSum = sum3(gave);
+			const over = hub.res.reduce((a, n, i) => a + Math.max(0, n - hub.keepOwn[i]), 0);
+			const why = hub.tradersFree <= S.tradersSafeguard ? `⛔ brak wolnych kupców (${hub.tradersFree}/${hub.tradersTotal}) – poczekaj, aż wrócą`
+				: !items.length ? '✔ wioski rejonu mają już średnią'
+				: over < S.carry ? `⚠ centrala nie ma nadwyżki ponad średnią rejonu (ma ${Math.round(100 * sum3(hub.res) / (3 * hub.cap))}% spichlerza)`
+				: gaveSum < wantedSum ? `kupców starcza na ${Math.round(hub.tradersFree)} × ${S.carry} – resztę dośle następnym razem` : '';
+			return { hub, why, members: all, mean, sends: out, gave, wanted: items.reduce((a, it) => a.map((n, i) => n + it.need[i]), [0, 0, 0]) };
 		});
 		const sends = [].concat(...regions.map(x => x.sends));
 		sends.forEach((s, i) => { s.i = i; s.done = false; });
@@ -1457,13 +1463,13 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 	}
 	function distHtml(rep, when) {
 		const merchants = rep.sends.reduce((a, s) => a + s.merchants, 0);
-		const rows = rep.regions.slice().sort((a, b) => sum3(b.wanted) - sum3(a.wanted)).map(x => `<tr class="row_b"><td>${vlink(x.hub)}</td><td>${x.members.length}</td><td>${resList(x.gave)}</td><td>${sum3(x.wanted) - sum3(x.gave) >= S.carry ? '<span style="color:#a00">' + resList(x.wanted.map((n, i) => Math.max(0, n - x.gave[i]))) + '</span>' : '<span style="color:#060">ok</span>'}</td></tr>`).join('');
+		const rows = rep.regions.slice().sort((a, b) => sum3(b.wanted) - sum3(a.wanted)).map(x => `<tr class="row_b"><td>${vlink(x.hub)}</td><td>${x.members.length}</td><td>${sum3(x.gave) ? resList(x.gave) : '<span class="grey">–</span>'}</td><td>${sum3(x.wanted) - sum3(x.gave) >= S.carry ? '<span style="color:#a00">' + resList(x.wanted.map((n, i) => Math.max(0, n - x.gave[i]))) + '</span>' : '<span style="color:#060">ok</span>'}</td><td>${x.why || ''}</td></tr>`).join('');
 		return `<p>Rozsyłam z central do wiosek rejonu, każdą do <b>średniego wypełnienia rejonu</b> (osobno dla każdego surowca)${rep.skipR >= 0 ? ', <b>bez ' + RES_PL[rep.skipR].toLowerCase() + '</b> (to zwoziłeś)' : ''}. Wysyłek: <b id="${NS}_left">${rep.sends.length}</b> · kupców: <b>${Math.round(merchants)}</b> · razem ${sum3(rep.sends.reduce((a, s) => a.concat([s]), []).reduce((a, s) => s.res.map((n, i) => n + a[i]), [0, 0, 0])).toLocaleString('pl-PL')}
 			${rep.hasSaved ? '' : '<br><span class="grey">Brak zapisanego podziału z zwózki – podzieliłem wioski na nowo.</span>'}</p>
 			${rep.sends.length ? `<p><a href="#" class="btn" id="${NS}_all">▶ Wyślij wszystko</a></p>
 				<table class="vis" id="${NS}_table" style="width:100%"><tbody><tr><th>Skąd → dokąd</th><th>Pól</th><th>Czas</th><th>Kupców</th><th>Surowce</th><th></th></tr>${rep.sends.map(rowHtml).join('')}</tbody></table>`
 				: `<table id="${NS}_table"><tbody></tbody></table><p>Nic do rozesłania – centrale nie mają nadwyżek ponad średnią rejonu (wymień u handlarza i otwórz ponownie).</p>`}
-			<h4>Centrale</h4><table class="vis" style="width:100%"><tbody><tr><th>Centrala</th><th>Wiosek</th><th>Rozsyła</th><th>Nadal brakuje</th></tr>${rows}</tbody></table>`;
+			<h4>Centrale</h4><table class="vis" style="width:100%"><tbody><tr><th>Centrala</th><th>Wiosek</th><th>Rozsyła</th><th>Nadal brakuje</th><th>Uwagi</th></tr>${rows}</tbody></table>`;
 	}
 
 	let regData = null;
