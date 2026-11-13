@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.7.0
+// @version      1.8.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.7.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.8.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -1460,14 +1460,34 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			return { hub, why, members: all, mean, sends: out, gave, wanted: items.reduce((a, it) => a.map((n, i) => n + it.need[i]), [0, 0, 0]) };
 		});
 		const sends = [].concat(...regions.map(x => x.sends));
+		// etap 2: między rejonami – do średniej całego konta (to, czego nie dało się wyrównać wewnątrz rejonów)
+		let cross = 0;
+		if (o.cross) {
+			const st = villages.map(v => Object.assign({}, v, { res: v.res.slice() }));
+			const by = {}; st.forEach(v => { by[v.id] = v; });
+			sends.forEach(s => { s.res.forEach((n, i) => { by[s.from].res[i] -= n; by[s.to].res[i] += n; }); by[s.from].tradersFree -= s.merchants; });
+			const capAll = st.reduce((a, v) => a + v.cap, 0);
+			const gm = RES.map((_, i) => st.reduce((a, v) => a + v.res[i] + v.inc[i], 0) / Math.max(1, capAll));
+			const donors = st.filter(v => v.tradersFree > S.tradersSafeguard).map(v => { v.keepOwn = RES.map((_, i) => i === skipR ? v.res[i] : Math.max(Math.ceil(gm[i] * v.cap), Math.floor(o.keepPct / 100 * v.cap))); return v; });
+			const items = st.map(v => ({
+				target: v.id, name: v.name, v,
+				need: RES.map((_, i) => i === skipR ? 0 : floor1000(Math.max(0, gm[i] * v.cap - v.res[i] - v.inc[i]))),
+				headroom: RES.map((_, i) => Math.max(0, v.cap - v.res[i] - v.inc[i])), what: '🗺️ między rejonami'
+			})).filter(it => it.need.some(n => n >= S.carry)).sort((a, b) => sum3(b.need) - sum3(a.need));
+			if (items.length && donors.length) {
+				const ex = allocate(items, donors, 'near', null).sends;
+				ex.forEach(s => { s.cross = true; });
+				cross = ex.length; sends.push(...ex);
+			}
+		}
 		sends.forEach((s, i) => { s.i = i; s.done = false; });
 		const moved = sends.reduce((a, s) => a + sum3(s.res), 0);
-		return { mode: 'dist', skipR, regions, sends, moved, hasSaved: !!(saved && saved.regions) };
+		return { mode: 'dist', cross, skipR, regions, sends, moved, hasSaved: !!(saved && saved.regions) };
 	}
 	function distHtml(rep, when) {
 		const merchants = rep.sends.reduce((a, s) => a + s.merchants, 0);
 		const rows = rep.regions.slice().sort((a, b) => sum3(b.wanted) - sum3(a.wanted)).map(x => `<tr class="row_b"><td>${vlink(x.hub)}</td><td>${x.members.length}</td><td>${sum3(x.gave) ? resList(x.gave) : '<span class="grey">–</span>'}</td><td>${sum3(x.wanted) - sum3(x.gave) >= S.carry ? '<span style="color:#a00">' + resList(x.wanted.map((n, i) => Math.max(0, n - x.gave[i]))) + '</span>' : '<span style="color:#060">ok</span>'}</td><td>${x.why || ''}</td></tr>`).join('');
-		return `<p>Wyrównuję w rejonach: wioski z nadwyżką (centrale po wymianie, ale też każda przepełniona) oddają najbliższym, które mają mniej niż <b>średnia rejonu</b> (osobno dla każdego surowca)${rep.skipR >= 0 ? ', <b>bez ' + RES_PL[rep.skipR].toLowerCase() + '</b> (to zwoziłeś)' : ''}. Wysyłek: <b id="${NS}_left">${rep.sends.length}</b> · kupców: <b>${Math.round(merchants)}</b> · razem ${sum3(rep.sends.reduce((a, s) => a.concat([s]), []).reduce((a, s) => s.res.map((n, i) => n + a[i]), [0, 0, 0])).toLocaleString('pl-PL')}
+		return `<p>Wyrównuję w rejonach: wioski z nadwyżką (centrale po wymianie, ale też każda przepełniona) oddają najbliższym, które mają mniej niż <b>średnia rejonu</b> (osobno dla każdego surowca)${rep.skipR >= 0 ? ', <b>bez ' + RES_PL[rep.skipR].toLowerCase() + '</b> (to zwoziłeś)' : ''}. Wysyłek: <b id="${NS}_left">${rep.sends.length}</b>${rep.cross ? ' <span class="grey">(w tym ' + rep.cross + ' między rejonami)</span>' : ''} · kupców: <b>${Math.round(merchants)}</b> · razem ${sum3(rep.sends.reduce((a, s) => a.concat([s]), []).reduce((a, s) => s.res.map((n, i) => n + a[i]), [0, 0, 0])).toLocaleString('pl-PL')}
 			${rep.hasSaved ? '' : '<br><span class="grey">Brak zapisanego podziału z zwózki – podzieliłem wioski na nowo.</span>'}</p>
 			${rep.sends.length ? `<p><a href="#" class="btn" id="${NS}_all">▶ Wyślij wszystko</a></p>
 				<table class="vis" id="${NS}_table" style="width:100%"><tbody><tr><th>Skąd → dokąd</th><th>Pól</th><th>Czas</th><th>Kupców</th><th>Surowce</th><th></th></tr>${rep.sends.map(rowHtml).join('')}</tbody></table>`
@@ -1501,7 +1521,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 				rejonów <input type="number" id="${NS}_r_k" min="0" max="60" value="${o.k}" style="width:45px"> <span class="grey">(0 = auto)</span><br>
 				centrala do <input type="number" id="${NS}_r_fill" min="30" max="100" value="${o.fillPct}" style="width:45px">% ·
 				dawcy zostawiają <input type="number" id="${NS}_r_keep" min="0" max="90" value="${o.keepPct}" style="width:45px">% spichlerza ·
-				<label><input type="checkbox" id="${NS}_r_cross"${o.cross ? ' checked' : ''}> dobieraj też z sąsiednich rejonów</label>
+				<label><input type="checkbox" id="${NS}_r_cross"${o.cross ? ' checked' : ''}> łącz też między rejonami</label>
 				<a href="#" class="btn" id="${NS}_r_calc">Przelicz</a> <a href="#" class="btn" id="${NS}_r_refetch">↻ Pobierz dane</a>
 			</td></tr></tbody></table>`;
 		const wire = () => {
@@ -1733,7 +1753,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		$('<a href="#" style="margin-left:8px">↓ pokaż</a>').on('click', e => { e.preventDefault(); row[0].scrollIntoView({ behavior: 'smooth', block: 'center' }); }).appendTo(bar);
 	}
 
-	if (typeof module !== 'undefined' && module.exports) module.exports = { adviseCore, allocate, prodPerHour, mixPlan, npcDeal, regionPlan, kmeans, _renderReg: d => { regData = d; renderRegions(); }, _render: d => { advData = d; renderAdvice(); } };
+	if (typeof module !== 'undefined' && module.exports) module.exports = { regionDist, adviseCore, allocate, prodPerHour, mixPlan, npcDeal, regionPlan, kmeans, _renderReg: d => { regData = d; renderRegions(); }, _render: d => { advData = d; renderAdvice(); } };
 
 	try {
 		if (game_data.screen === 'market' && location.href.includes('mode=call')) initMarket();
