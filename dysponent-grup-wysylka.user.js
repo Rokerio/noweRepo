@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.8.0
+// @version      1.8.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.8.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.8.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -1442,7 +1442,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			const mean = RES.map((_, i) => all.reduce((a, v) => a + v.res[i] + v.inc[i], 0) / Math.max(1, capSum));
 			// dawcą jest KAŻDA wioska rejonu, która ma dany surowiec ponad średnią rejonu (centrala po wymianie też)
 			const donors = all.filter(v => v.tradersFree > S.tradersSafeguard).map(v => Object.assign({}, v, {
-				keepOwn: RES.map((_, i) => i === skipR ? v.res[i] : Math.max(Math.ceil(mean[i] * v.cap), Math.floor(o.keepPct / 100 * v.cap)))
+				keepOwn: RES.map((_, i) => i === skipR ? v.res[i] : Math.ceil(mean[i] * v.cap))
 			}));
 			const items = all.map(v => ({
 				target: v.id, name: v.name, v,
@@ -1452,7 +1452,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			const out = items.length && donors.length ? allocate(items, donors, 'near', null).sends : [];
 			const gave = out.reduce((a, s) => a.map((n, i) => n + s.res[i]), [0, 0, 0]);
 			const wantedSum = items.reduce((a, it) => a + sum3(it.need), 0), gaveSum = sum3(gave);
-			const surplus = all.reduce((a, v) => a + RES.reduce((q, _, i) => q + (i === skipR ? 0 : Math.max(0, v.res[i] - Math.max(Math.ceil(mean[i] * v.cap), Math.floor(o.keepPct / 100 * v.cap)))), 0), 0);
+			const surplus = all.reduce((a, v) => a + RES.reduce((q, _, i) => q + (i === skipR ? 0 : Math.max(0, v.res[i] - Math.ceil(mean[i] * v.cap))), 0), 0);
 			const why = !items.length ? '✔ wioski rejonu mają już średnią'
 				: !donors.length ? '⛔ w całym rejonie brak wolnych kupców – poczekaj, aż wrócą'
 				: surplus < S.carry ? `⚠ nikt w rejonie nie ma nadwyżki ponad średnią (średnio ${Math.round(100 * (mean[0] + mean[1] + mean[2]) / 3)}% spichlerza) – najpierw zwieź/wymień`
@@ -1468,7 +1468,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			sends.forEach(s => { s.res.forEach((n, i) => { by[s.from].res[i] -= n; by[s.to].res[i] += n; }); by[s.from].tradersFree -= s.merchants; });
 			const capAll = st.reduce((a, v) => a + v.cap, 0);
 			const gm = RES.map((_, i) => st.reduce((a, v) => a + v.res[i] + v.inc[i], 0) / Math.max(1, capAll));
-			const donors = st.filter(v => v.tradersFree > S.tradersSafeguard).map(v => { v.keepOwn = RES.map((_, i) => i === skipR ? v.res[i] : Math.max(Math.ceil(gm[i] * v.cap), Math.floor(o.keepPct / 100 * v.cap))); return v; });
+			const donors = st.filter(v => v.tradersFree > S.tradersSafeguard).map(v => { v.keepOwn = RES.map((_, i) => i === skipR ? v.res[i] : Math.ceil(gm[i] * v.cap)); return v; });
 			const items = st.map(v => ({
 				target: v.id, name: v.name, v,
 				need: RES.map((_, i) => i === skipR ? 0 : floor1000(Math.max(0, gm[i] * v.cap - v.res[i] - v.inc[i]))),
