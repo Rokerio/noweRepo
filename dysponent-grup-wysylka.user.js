@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.10.0
+// @version      1.10.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.10.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.10.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -1690,7 +1690,6 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		const hhmm = min => new Date(Date.now() + min * 60000).toLocaleString('pl-PL', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
 		const pct = x => Math.round(100 * x / p.capAll);
 		const mil = x => (x / 1e6).toFixed(1).replace('.', ',') + ' mln';
-		const stock = thruData.villages.reduce((a, v) => a + sum3(v.res), 0);
 		const toMints = thruData.trades.filter(t => p.mints.some(m => m.id === t.to) && t.outgoing).reduce((a, t) => a + t.res, 0);
 		const verdict = p.first === 0 ? `<span style="color:#060"><b>✅ Już teraz</b> da się dowieźć ${o.pct}% w ${o.hours} h.</span>`
 			: p.first !== null ? `<span style="color:#a60"><b>⏳ Luz będzie za ${fmtMin(p.first)}</b> (start ok. ${hhmm(p.first)}) – wtedy kupcy wystarczą na ${o.pct}% w ${o.hours} h.</span>`
@@ -1710,9 +1709,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 				<a href="#" class="btn" id="${NS}_t_calc">Przelicz</a> <a href="#" class="btn" id="${NS}_t_refetch">↻ Pobierz dane</a>
 			</td></tr></tbody></table>
 			<p>Mennice (najbardziej centralne z pałacem): <b>${p.mints.map(m => vlink(m)).join(', ')}</b></p>
-			<p>${verdict}${stock < p.target ? `<br><span style="color:#a60">⚠ Ale surowców na kontach jest tylko ${Math.round(100 * stock / p.target)}% celu – transport nie jest wąskim gardłem, ogranicza go zapas i produkcja.</span>` : ''}</p>
+			<p>${verdict}</p>
 			<p>Cel: <b>${mil(p.target)}</b> (${o.pct}% z ${mil(p.capAll)}) · możliwe od teraz w ${o.hours} h: <b>${mil(p.now)}</b> (${pct(p.now)}%) · maksimum przy wszystkich kupcach: <b>${mil(p.limit)}</b> (${pct(p.limit)}%)<br>
-			<span class="grey">Na kontach leży teraz ${mil(stock)} (${pct(stock)}% spichlerzy) – tyle realnie jest do wywiezienia z zapasu, resztę dołoży produkcja. W drodze do mennic już jest ${mil(toMints)} (nie wliczone). Liczone: każdy kupiec woził do najbliższej mennicy, kolejne kursy co 2×dojazd + przerwa; kupcy będący w drodze ruszają dopiero po powrocie.</span></p>
+			<span class="grey">W drodze do mennic już jest ${mil(toMints)} (nie wliczone). Liczone: każdy kupiec woził do najbliższej mennicy, kolejne kursy co 2×dojazd + przerwa; kupcy będący w drodze ruszają dopiero po powrocie.</span></p>
 			<h4>Kiedy się udrożni (start za…)</h4><table class="vis" style="width:100%"><tbody><tr><th>Start</th><th>Przepustowość ${o.hours} h</th><th>% spichlerzy</th><th></th></tr>${tl}</tbody></table>
 			<h4>Najdalsze wioski (ograniczają przepustowość)</h4><table class="vis" style="width:100%"><tbody><tr><th>Wioska</th><th>Kupcy wolni/łącznie</th><th>Pól do mennicy</th><th>Pełny kurs</th><th>Ostatni wróci za</th></tr>${slow}</tbody></table>
 			</div>`);
