@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dostawy MK - drzewo do celu (bicie monet)
 // @namespace    dostawy-mk-drzewo
-// @version      2.4.1
+// @version      2.4.2
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @description  Menedżer konta > Dostawy: (1) zaopatrzenie nowych wiosek pod budowę i rekrutację, (2) liczy najszybsze trasy (każda wioska jeden cel, przerzuty przez wioski z kupcami) do wioski bijącej monety i po kliknięciu podmienia harmonogramy dostaw.
@@ -11,7 +11,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.4.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.4.2',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI */
@@ -50,7 +50,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		devPoints: 9000,             // ...i wioska ma co najmniej tyle punktów
 		protectMints: false,         // ochrona pilnuje też spichlerzy mennic (false = mennice pilnujesz sam, wymianą)
 		packageRoom: 30,             // pośrednik z co najmniej tylu % wolnego spichlerza (miejsce na pakiet) dostaje pełny dopływ
-		relayShare: 70               // pośrednik dostaje od swoich wiosek najwyżej tyle % tego, co sam zdąży oddać (reszta kupców na własny zapas)
+		relayShare: 70,              // (stare, nieużywane)
+		fullShare: 40                // pełny pośrednik dostaje od swoich wiosek najwyżej tyle % tego, co sam odda - reszta kupców opróżnia jego zapas
 	};
 	// ===============================================================================
 
@@ -180,6 +181,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 			for (let i = 0; i < n; i++) {
 				const t = F[i] * trip(i, par[i]);
 				load[i] = F[i] > 0 ? (M[i] > 0 ? t / M[i] : Infinity) : 0;
+				// pełny pośrednik oddaje cudze tylko częścią kupców (fullShare) - jego dzieci jadą wolniej, liczymy to
+				if (full[i] && F[i] > stock[i] && M[i] > 0) { load[i] = Math.max(load[i], (F[i] - stock[i]) * trip(i, par[i]) / (fsh * M[i])); }
 				if (isFinite(load[i])) { max = Math.max(max, load[i]); sq += (load[i] / 60) * (load[i] / 60); }
 				work += t;
 			}
@@ -188,7 +191,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		const better = (a, b) => a.max < b.max - 1e-6 || (Math.abs(a.max - b.max) <= 1e-6 && (a.sq < b.sq - 1e-6 || (Math.abs(a.sq - b.sq) <= 1e-6 && a.work < b.work - 1e-6)));
 		// pełny spichlerz (mniej niż packageRoom% wolnego) nie bierze cudzych surowców - najpierw oddaje swoje; inaczej pośrednik puchnie
 		const roomy = j => { const v = nodes[j]; return !v.res || Math.max(...v.res) <= (v.cap || 400000) * (1 - Math.max(0, Math.min(90, S.packageRoom)) / 100); };
-		const opts = sinks.map((m, k) => -k - 1).concat([...Array(n).keys()].filter(j => M[j] > 0 && roomy(j)));
+		const full = nodes.map((v, j) => !roomy(j)), fsh = Math.max(5, Math.min(100, S.fullShare)) / 100;
+		const opts = sinks.map((m, k) => -k - 1).concat([...Array(n).keys()].filter(j => M[j] > 0));
 		const nearest = i => -1 - sinks.map((m, k) => [dist(nodes[i], m), k]).sort((a, b) => a[0] - b[0])[0][1];
 		function search(par) {
 			let cur = evaluate(par), imp = true;
@@ -321,7 +325,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 	// i przy pakietach spichlerz się przelewa. Dlatego dopływ do pośrednika = najwyżej relayShare % jego odpływu:
 	// paczki dzieci zmniejszamy, a gdy 1 tys. to wciąż za dużo - wysyłają rzadziej.
 	function throttleRelays(plan) {
-		const turn = turnMinutes(), share = Math.max(10, Math.min(100, S.relayShare)) / 100;
+		const turn = turnMinutes(), share = Math.max(5, Math.min(100, S.fullShare)) / 100;
 		const kids = new Map();
 		plan.forEach(p => { if (!p.isSink) { if (!kids.has(p.to)) { kids.set(p.to, []); } kids.get(p.to).push(p); } });
 		const rateOf = p => Math.min(p.pack.reduce((a, b) => a + b, 0) / Math.max(turn, p.every || 0), p.v.merchants / Math.max(2 * p.d * S.minutesPerField, turn));	// tys./min
@@ -594,7 +598,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				<tr><td>Menedżer realnie wysyła co</td><td><input id="${NS}_re" size="3" value="${S.realEvery || ''}" placeholder="auto"> min <span class="grey">puste = skrypt oszacuje z zajętych kupców (zwykle ~2 min, mimo ustawionego 00:01)</span></td></tr>
 				<tr><td>Pomiń wioski</td><td><input id="${NS}_x" size="24" value="${esc(S.exclude)}"> <span class="grey">współrzędne po przecinku</span> · dalej niż <input id="${NS}_md" size="2" value="${S.maxDist}"> pól od celu pomijaj</td></tr>
 				<tr><td>Przystanki / paczka</td><td>najwyżej <input id="${NS}_hops" size="2" value="${S.maxHops}"> przystanki, paczka min <input id="${NS}_minp" size="2" value="${S.minPerRes}"> max <input id="${NS}_max" size="3" value="${S.maxPerRes}"> tys. jednego surowca na turę</td></tr>
-				<tr><td>Pośrednik dostaje najwyżej</td><td><input id="${NS}_rs" size="3" value="${S.relayShare}">% tego, co sam zdąży oddać, gdy ma mniej niż <input id="${NS}_pr" size="2" value="${S.packageRoom}">% wolnego spichlerza (miejsce na pakiet); z miejscem - pełny dopływ <span class="grey">(reszta jego kupców na własny zapas - przy pakietach pośrednik się nie przeleje; 100 = bez ograniczenia)</span></td></tr>
+				<tr><td>Pełny pośrednik dostaje</td><td>najwyżej <input id="${NS}_rs" size="3" value="${S.fullShare}">% tego, co sam odda (pełny = mniej niż <input id="${NS}_pr" size="2" value="${S.packageRoom}">% wolnego spichlerza) <span class="grey">- reszta jego kupców opróżnia jego zapas; mniej % = szybciej się opróżnia, a dalsze wioski szukają innych pośredników. Z miejscem w spichlerzu - pełny dopływ</span></td></tr>
 				<tr><td>Ochrona przed przelaniem</td><td><label><input type="checkbox" id="${NS}_prot" ${S.protect ? 'checked' : ''}> licz na</label> <input id="${NS}_ph" size="2" value="${S.protectHours}"> h naprzód <span class="grey">(np. na noc) - zmniejsza paczki, które przelałyby spichlerz pośrednika</span> <label style="margin-left:8px"><input type="checkbox" id="${NS}_pmint" ${S.protectMints ? 'checked' : ''}> także mennic</label></td></tr>
 				<tr><td>Wolne zsyłanie z produkcji</td><td><label><input type="checkbox" id="${NS}_pm" ${S.prodMode ? 'checked' : ''}> co godzinę prosto do najbliższej mennicy</label> <input id="${NS}_ps" size="3" value="${S.prodShare}">% produkcji wioski, rozwinięta <input id="${NS}_ds" size="3" value="${S.devShare}">%<br><span class="grey">rozwinięta = zagroda ≥ <input id="${NS}_dpm" size="5" value="${S.devPopMax}"> miejsc, zajęta ≥ <input id="${NS}_dpf" size="2" value="${S.devPopFill}">%, wioska ≥ <input id="${NS}_dp" size="5" value="${S.devPoints}"> pkt</span></td></tr>
 				<tr><td>Tryb spokojny</td><td><label><input type="checkbox" id="${NS}_calm" ${S.calm ? 'checked' : ''}> zamiast pełnych obrotów: surowce na</label> <input id="${NS}_cpd" size="4" value="${S.coinsPerDay}"> monet na dobę <span class="grey">(1 szlachcic dziennie = tyle monet, ile wynosi następny limit szlachciców, np. 127)</span></td></tr>
@@ -661,7 +665,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		S.minExchange = Math.max(1, num($('#' + NS + '_mx').val()) || 200);
 		S.calm = $('#' + NS + '_calm').prop('checked');
 		S.prodMode = $('#' + NS + '_pm').prop('checked');
-		S.relayShare = Math.max(10, Math.min(100, num($('#' + NS + '_rs').val()) || 70));
+		S.fullShare = Math.max(5, Math.min(100, num($('#' + NS + '_rs').val()) || 40));
 		S.packageRoom = Math.max(0, Math.min(90, num($('#' + NS + '_pr').val())));
 		S.prodShare = Math.max(1, num($('#' + NS + '_ps').val()) || 50);
 		S.devShare = Math.max(1, num($('#' + NS + '_ds').val()) || 100);
@@ -745,7 +749,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 			Koszt monety: ${sinks.map(t => esc(t.name) + ' ' + coinCostOf(t).join('/') + 'k').join(', ')}<br>
 			${prodInfo ? `<b>Wolne zsyłanie z produkcji:</b> co godzinę ${prodInfo.n - prodInfo.dev} wiosek po ${S.prodShare}% produkcji, ${prodInfo.dev} rozwiniętych po ${S.devShare}% → do mennic ok. <b>${fmt(prodInfo.perH)} tys./h</b> ≈ <b>${prodInfo.coins}</b> monet na dobę. <span class="grey">${prodInfo.levels ? 'Produkcja z poziomów kopalń (przegląd Budynki).' : 'Nie odczytałem poziomów kopalń - przyjęta produkcja bieżącej wioski dla wszystkich.'} Rozwinięta = zagroda ≥ ${S.devPopMax} miejsc zajęta w ≥ ${S.devPopFill}% i ≥ ${S.devPoints} pkt.</span><br>` : ''}
 			${calmCoins ? `<b>Tryb spokojny:</b> cel ${S.coinsPerDay} monet/dobę → dojedzie na ok. <b>${calmCoins.reduce((a, b) => a + b, 0)}</b> (${sinks.map((t, i) => esc(t.name) + ' ' + calmCoins[i]).join(', ')}) - co najmniej tyle, ile wioski produkują, żeby się nie przelewały.<br>` : ''}
-			${throttledN ? `Pośrednicy: ${throttledN} tras wysyła mniej, żeby pośrednik dostawał najwyżej ${S.relayShare}% tego, co sam odda (nie zapcha się przy pakietach).<br>` : ''}
+			${throttledN ? `Pośrednicy: ${throttledN} tras wysyła mniej, żeby pełny pośrednik dostawał najwyżej ${S.fullShare}% tego, co sam odda (opróżnia się, nie przeleje przy pakietach).<br>` : ''}
 			Menedżer wysyła realnie co <b>${fmt(turnMinutes())} min</b> <span class="grey">(${S.realEvery > 0 ? 'wpisane ręcznie' : measured && measured.n >= 3 ? 'zmierzone z kupców ' + measured.n + ' tras' : 'za mało danych do pomiaru - przyjęte 2 min'}) - paczki są na tyle większe</span></p>
 			<table class="vis" style="width:100%"><tr><th>Uwzgl.</th><th>Wioska</th><th>Wysyła do</th><th>Pola</th><th>Kurs</th><th>Kupcy</th><th>Przepływ</th><th>Paczka (D/G/Ż tys.)</th><th>Co</th></tr>`;
 		const sinkNames = sinks.map(v => esc(v.name)).join(', ');
