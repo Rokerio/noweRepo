@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.11.0
+// @version      1.12.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.11.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.12.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -1617,7 +1617,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		let o = {};
 		try { o = JSON.parse(localStorage.getItem(TKEY) || 'null') || {}; } catch (e) { /* ignore */ }
 		const n = (k, d, lo, hi) => { const v = Number(o[k]); return o[k] !== undefined && isFinite(v) && v >= lo && v <= hi ? v : d; };
-		return { hours: n('hours', 48, 1, 240), pct: n('pct', 150, 10, 1000), nMint: n('nMint', 3, 1, 20), gap: n('gap', 10, 0, 120) };
+		return { hours: n('hours', 48, 1, 240), pct: n('pct', 150, 10, 1000), nMint: n('nMint', 3, 1, 20), gap: n('gap', 10, 0, 120), pkg: n('pkg', 50, 0, 100) };
 	}
 	// villages: [{id,name,x,y,cap,tradersFree,tradersTotal,lv}], trades: [{home,n,ready(min),res,to}]
 	function thruPlan(villages, trades, o) {
@@ -1648,8 +1648,29 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		const scan = [];
 		for (let t = 0; t <= maxScan; t += step) scan.push({ t, cap: cap(t) });
 		const limit = cap(1e9);
+		// GOTOWOŚĆ DO PAKIETU: pakiet dodaje pkg% pojemności każdego surowca – żaden surowiec w żadnej wiosce nie może się po nim przelać.
+		// Wioska musi więc najpierw wywieźć nadmiar (liczony po każdym surowcu osobno, z uwzględnieniem surowców już jadących do niej).
+		const incTo = {};
+		trades.forEach(t => { if (t.resV) { const a = incTo[t.to] || (incTo[t.to] = [0, 0, 0]); t.resV.forEach((x, i) => { a[i] += x; }); } });
+		const pk = o.pkg / 100;
+		const drainOf = (v, r) => {
+			const inc = incTo[v.id] || [0, 0, 0];
+			const need = RES.map((_, i) => Math.max(0, Math.ceil((v.res[i] + inc[i] + pk * v.cap - v.cap) / carry) * carry));
+			const loads = sum3(need) / carry;
+			if (!loads) return { need, loads: 0, t: 0 };
+			const by = t => r.groups.reduce((a, g) => a + (t >= g.t + r.T1 ? (1 + Math.floor((t - g.t - r.T1) / r.round)) * g.n : 0), 0);
+			let lo = 0, hi = 240 * 60;
+			if (by(hi) < loads) return { need, loads, t: Infinity };
+			while (hi - lo > 1) { const mid = (lo + hi) / 2; if (by(mid) >= loads) hi = mid; else lo = mid; }
+			return { need, loads, t: Math.ceil(hi) };
+		};
+		const drain = rows.map(r => Object.assign({ r }, drainOf(r.v, r)));
+		const blockers = drain.filter(d => d.loads > 0).sort((a, b) => b.t - a.t);
+		const readyIn = blockers.length ? blockers[0].t : 0;
+		const needTotal = RES.map((_, i) => drain.reduce((a, d) => a + d.need[i], 0));
+		const mintRoom = RES.map((_, i) => mints.reduce((a, m) => a + Math.max(0, m.cap - m.res[i] - ((incTo[m.id] || [0, 0, 0])[i])), 0));
 		const first = scan.find(s => s.cap >= target);
-		return { mints, rows, target, capAll, now: scan[0].cap, limit, scan, first: first ? first.t : null, hours: o.hours, pct: o.pct };
+		return { drain, blockers, readyIn, needTotal, mintRoom, pkg: o.pkg, mints, rows, target, capAll, now: scan[0].cap, limit, scan, first: first ? first.t : null, hours: o.hours, pct: o.pct };
 	}
 	async function thruFetch() {
 		msg.info('Przepustowość: pobieram dane…', 3000);
@@ -1681,12 +1702,13 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			const tds = tr.children('td');
 			const tdTimer = tr.find('.timer').first().closest('td');
 			const n = num(tds.eq(tds.index(tdTimer) + 1).text());
-			let res = 0;
-			tds.last().find('.nowrap').each(function () { res += num($(this).text()); });
+			const resV = [0, 0, 0];
+			tds.last().find('.nowrap').each(function () { const r = RES.findIndex(nm => $(this).find('.' + nm).length); if (r >= 0) resV[r] += num($(this).text()); });
+			const res = sum3(resV);
 			const home = ids[0], to = ids[1];
 			let ready = sec / 60;
 			if (outgoing && byId[home] && byId[to]) ready += dist(byId[home], byId[to]) * S.minutesPerField;
-			if (n) trades.push({ home, to, n, ready, res, outgoing });
+			if (n) trades.push({ home, to, n, ready, res, resV, outgoing });
 		});
 		return { villages, trades, mintIds, mintGroup, ts: Date.now() };
 	}
@@ -1704,12 +1726,22 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 					: `<span style="color:#a00"><b>⛔ Nie wystarczy nawet na wszystkich kupcach</b> (max ${pct(p.limit)}% przy ${o.hours} h) – za mało kupców albo za daleko od mennic.</span>`;
 		const slow = p.rows.slice().sort((a, b) => b.T1 - a.T1).slice(0, 12).map(r => `<tr class="row_b"><td>${vlink(r.v)}</td><td>${Math.round(r.free)}/${r.total}</td><td>${dist(r.v, r.m).toFixed(0)}</td><td>${fmtMin(r.round)}</td><td>${r.lastBack > 0 ? fmtMin(r.lastBack) : '–'}</td></tr>`).join('');
 		const tl = p.scan.filter(s => s.t % 120 === 0 && s.t <= 24 * 60).map(s => `<tr class="row_b"><td>${s.t ? 'za ' + fmtMin(s.t) : 'teraz'}</td><td>${mil(s.cap)}</td><td><b>${pct(s.cap)}%</b></td><td>${s.cap >= p.target ? '✅' : ''}</td></tr>`).join('');
+		const bl = p.blockers;
+		const blRows = bl.slice(0, 15).map(d => `<tr class="row_b"><td>${vlink(d.r.v)}</td><td>${resList(d.need)}</td><td>${d.loads}</td><td>${Math.round(d.r.free)}/${d.r.total}</td><td>${isFinite(d.t) ? fmtMin(d.t) : '<span style="color:#a00">>240 h</span>'}</td></tr>`).join('');
+		const roomTxt = resList(p.mintRoom), needSum = sum3(p.needTotal), roomSum = sum3(p.mintRoom);
+		const pkgHtml = `<h4>📦 Gotowość do pakietu (+${o.pkg}% pojemności każdego surowca)</h4>
+			<p>${!bl.length ? '<span style="color:#060"><b>✅ Pakiet można kliknąć już teraz</b> – żaden surowiec w żadnej wiosce się nie przeleje.</span>'
+				: isFinite(p.readyIn) ? `<span style="color:#a60"><b>⏳ Wszystkie wioski będą gotowe za ${fmtMin(p.readyIn)}</b> (ok. ${hhmm(p.readyIn)}) – tyle potrzeba kupców, by wywieźć nadmiar w ${bl.length} wioskach.</span>`
+					: '<span style="color:#a00"><b>⛔ Przynajmniej jedna wioska nie zdąży w 240 h</b> – za mało kupców.</span>'}<br>
+			<span class="grey">Do wywiezienia razem: ${resList(p.needTotal) || '–'} · wolne miejsce w mennicach: ${roomTxt || '<b>brak</b>'}${needSum > roomSum ? ' <span style="color:#a00">– mennice nie pomieszczą wszystkiego naraz, liczy się tempo bicia</span>' : ''}</span></p>
+			${bl.length ? `<table class="vis" style="width:100%"><tbody><tr><th>Wioska blokująca pakiet</th><th>Nadmiar do wywiezienia</th><th>Kursów</th><th>Kupcy</th><th>Gotowa za</th></tr>${blRows}</tbody></table>` : ''}`;
 		const when = new Date(thruData.ts).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
 		Dialog.show(NS, `
 			<h3>📊 Przepustowość do mennic</h3>
 			<div style="max-height:75vh;overflow:auto;-webkit-overflow-scrolling:touch">
 			<p class="grey">Dane z ${when} · ${thruData.villages.length} wiosek</p>
 			<table class="vis" style="width:100%"><tbody><tr class="row_b"><td>
+				pakiet <input type="number" id="${NS}_t_pkg" min="0" max="100" value="${o.pkg}" style="width:45px">% pojemności na surowiec ·
 				cel <input type="number" id="${NS}_t_pct" min="10" max="1000" value="${o.pct}" style="width:55px">% pojemności wszystkich spichlerzy w <input type="number" id="${NS}_t_h" min="1" max="240" value="${o.hours}" style="width:45px"> h ·
 				mennic <input type="number" id="${NS}_t_n" min="1" max="20" value="${o.nMint}" style="width:35px"> ·
 				przerwa między kursami <input type="number" id="${NS}_t_gap" min="0" max="120" value="${o.gap}" style="width:40px"> min
@@ -1719,12 +1751,13 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			<p>${verdict}</p>
 			<p>Cel: <b>${mil(p.target)}</b> (${o.pct}% z ${mil(p.capAll)}) · możliwe od teraz w ${o.hours} h: <b>${mil(p.now)}</b> (${pct(p.now)}%) · maksimum przy wszystkich kupcach: <b>${mil(p.limit)}</b> (${pct(p.limit)}%)<br>
 			<span class="grey">W drodze do mennic już jest ${mil(toMints)} (nie wliczone). Liczone: każdy kupiec woził do najbliższej mennicy, kolejne kursy co 2×dojazd + przerwa; kupcy będący w drodze ruszają dopiero po powrocie.</span></p>
+			${pkgHtml}
 			<h4>Kiedy się udrożni (start za…)</h4><table class="vis" style="width:100%"><tbody><tr><th>Start</th><th>Przepustowość ${o.hours} h</th><th>% spichlerzy</th><th></th></tr>${tl}</tbody></table>
 			<h4>Najdalsze wioski (ograniczają przepustowość)</h4><table class="vis" style="width:100%"><tbody><tr><th>Wioska</th><th>Kupcy wolni/łącznie</th><th>Pól do mennicy</th><th>Pełny kurs</th><th>Ostatni wróci za</th></tr>${slow}</tbody></table>
 			</div>`);
 		const apply = () => {
 			const g = (id, d, lo, hi) => { const v = Number($('#' + NS + id).val()); return isFinite(v) && v >= lo && v <= hi ? v : d; };
-			try { localStorage.setItem(TKEY, JSON.stringify({ pct: g('_t_pct', o.pct, 10, 1000), hours: g('_t_h', o.hours, 1, 240), nMint: g('_t_n', o.nMint, 1, 20), gap: g('_t_gap', o.gap, 0, 120) })); } catch (e) { /* ignore */ }
+			try { localStorage.setItem(TKEY, JSON.stringify({ pkg: g('_t_pkg', o.pkg, 0, 100), pct: g('_t_pct', o.pct, 10, 1000), hours: g('_t_h', o.hours, 1, 240), nMint: g('_t_n', o.nMint, 1, 20), gap: g('_t_gap', o.gap, 0, 120) })); } catch (e) { /* ignore */ }
 		};
 		$('#' + NS + '_t_calc').on('click', e => { e.preventDefault(); apply(); renderThru(); });
 		$('#' + NS + '_t_refetch').on('click', e => { e.preventDefault(); apply(); runThru(true).catch(handleError); });
