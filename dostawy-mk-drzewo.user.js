@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dostawy MK - drzewo do celu (bicie monet)
 // @namespace    dostawy-mk-drzewo
-// @version      2.2.2
+// @version      2.3.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @description  Menedżer konta > Dostawy: (1) zaopatrzenie nowych wiosek pod budowę i rekrutację, (2) liczy najszybsze trasy (każda wioska jeden cel, przerzuty przez wioski z kupcami) do wioski bijącej monety i po kliknięciu podmienia harmonogramy dostaw.
@@ -11,7 +11,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.2.2',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.3.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI */
@@ -47,7 +47,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		devShare: 100,               // ...a wioska rozwinięta (pełna zagroda najwyższego poziomu i dużo punktów) tyle %
 		devPopMax: 24000,            // rozwinięta: zagroda co najmniej tyle miejsc (24000 = poziom 30)
 		devPopFill: 95,              // ...zapełniona co najmniej w tylu %
-		devPoints: 9000              // ...i wioska ma co najmniej tyle punktów
+		devPoints: 9000,             // ...i wioska ma co najmniej tyle punktów
+		relayShare: 70               // pośrednik dostaje od swoich wiosek najwyżej tyle % tego, co sam zdąży oddać (reszta kupców na własny zapas)
 	};
 	// ===============================================================================
 
@@ -311,6 +312,34 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		});
 	}
 
+	// ================= POŚREDNICY NIE MOGĄ SIĘ ZAPCHAĆ =================
+	// Pośrednik oddaje najwyżej tyle, ile uciągną jego kupcy. Jeśli wioski za nim przywożą więcej, surowce stają u niego
+	// i przy pakietach spichlerz się przelewa. Dlatego dopływ do pośrednika = najwyżej relayShare % jego odpływu:
+	// paczki dzieci zmniejszamy, a gdy 1 tys. to wciąż za dużo - wysyłają rzadziej.
+	function throttleRelays(plan) {
+		const turn = turnMinutes(), share = Math.max(10, Math.min(100, S.relayShare)) / 100;
+		const kids = new Map();
+		plan.forEach(p => { if (!p.isSink) { if (!kids.has(p.to)) { kids.set(p.to, []); } kids.get(p.to).push(p); } });
+		const rateOf = p => Math.min(p.pack.reduce((a, b) => a + b, 0) / Math.max(turn, p.every || 0), p.v.merchants / Math.max(2 * p.d * S.minutesPerField, turn));	// tys./min
+		// od pośredników najbliżej mennicy w dół - ograniczenie wyżej zmniejsza odpływ niższego pośrednika
+		const depth = p => { let x = p, d = 0; while (x && !x.isSink && d < 10) { const to = x.to; x = plan.find(q => q.v === to); d++; } return d; };
+		plan.filter(r => kids.has(r.v)).sort((a, b) => depth(a) - depth(b)).forEach(r => {
+			const ks = kids.get(r.v);
+			const out = rateOf(r) * share, inflow = ks.reduce((a, c) => a + rateOf(c), 0);
+			r.relayIn = inflow; r.relayOut = rateOf(r);
+			if (inflow <= out) { return; }
+			const f = out / inflow;
+			ks.forEach(c => {
+				const target = rateOf(c) * f;						// tys./min
+				let per = Math.max(1, Math.floor(target * turn / 3)), every = turn;
+				if (per * 3 / turn > target) { per = 1; every = Math.ceil(3 / target); }
+				c.pack = [per, per, per];
+				c.every = Math.min(23 * 60 + 59, Math.max(c.every || 0, every, intervalMinutes()));
+				c.throttled = r.v.name;
+			});
+		});
+	}
+
 	// ================= WOLNE ZSYŁANIE Z PRODUKCJI =================
 	// produkcja kopalni: 30 * 1,163118^(poziom-1) na godz. (poziom 30 = 2400), razy prędkość świata i bonusy -
 	// ten mnożnik bierzemy z bieżącej wioski (game_data: produkcja i poziomy kopalń)
@@ -389,7 +418,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		});
 		const arr = Array.from({ length: N + 1 }, () => []);
 		const coins = sinks.map(() => 0);
-		routes.forEach(r => { r.sent = [0, 0, 0]; r.trip = 2 * dist(r.s, r.t) * mpf; r.need = Math.ceil(r.pack[0] + r.pack[1] + r.pack[2] - 1e-9); });
+		routes.forEach(r => { r.nextAt = 0; r.sent = [0, 0, 0]; r.trip = 2 * dist(r.s, r.t) * mpf; r.need = Math.ceil(r.pack[0] + r.pack[1] + r.pack[2] - 1e-9); });
 		for (let m = 0; m < N; m++) {
 			st.forEach(x => { x.busy = Math.max(0, x.busy - x.ret[m]); });
 			arr[m].forEach(a => {
@@ -552,6 +581,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				<tr><td>Menedżer realnie wysyła co</td><td><input id="${NS}_re" size="3" value="${S.realEvery || ''}" placeholder="auto"> min <span class="grey">puste = skrypt oszacuje z zajętych kupców (zwykle ~2 min, mimo ustawionego 00:01)</span></td></tr>
 				<tr><td>Pomiń wioski</td><td><input id="${NS}_x" size="24" value="${esc(S.exclude)}"> <span class="grey">współrzędne po przecinku</span> · dalej niż <input id="${NS}_md" size="2" value="${S.maxDist}"> pól od celu pomijaj</td></tr>
 				<tr><td>Przystanki / paczka</td><td>najwyżej <input id="${NS}_hops" size="2" value="${S.maxHops}"> przystanki, paczka min <input id="${NS}_minp" size="2" value="${S.minPerRes}"> max <input id="${NS}_max" size="3" value="${S.maxPerRes}"> tys. jednego surowca na turę</td></tr>
+				<tr><td>Pośrednik dostaje najwyżej</td><td><input id="${NS}_rs" size="3" value="${S.relayShare}">% tego, co sam zdąży oddać <span class="grey">(reszta jego kupców na własny zapas - przy pakietach pośrednik się nie przeleje; 100 = bez ograniczenia)</span></td></tr>
 				<tr><td>Ochrona przed przelaniem</td><td><label><input type="checkbox" id="${NS}_prot" ${S.protect ? 'checked' : ''}> licz na</label> <input id="${NS}_ph" size="2" value="${S.protectHours}"> h naprzód <span class="grey">(np. na noc) - zmniejsza paczki, które przelałyby spichlerz mennicy albo pośrednika</span></td></tr>
 				<tr><td>Wolne zsyłanie z produkcji</td><td><label><input type="checkbox" id="${NS}_pm" ${S.prodMode ? 'checked' : ''}> co godzinę prosto do najbliższej mennicy</label> <input id="${NS}_ps" size="3" value="${S.prodShare}">% produkcji wioski, rozwinięta <input id="${NS}_ds" size="3" value="${S.devShare}">%<br><span class="grey">rozwinięta = zagroda ≥ <input id="${NS}_dpm" size="5" value="${S.devPopMax}"> miejsc, zajęta ≥ <input id="${NS}_dpf" size="2" value="${S.devPopFill}">%, wioska ≥ <input id="${NS}_dp" size="5" value="${S.devPoints}"> pkt</span></td></tr>
 				<tr><td>Tryb spokojny</td><td><label><input type="checkbox" id="${NS}_calm" ${S.calm ? 'checked' : ''}> zamiast pełnych obrotów: surowce na</label> <input id="${NS}_cpd" size="4" value="${S.coinsPerDay}"> monet na dobę <span class="grey">(1 szlachcic dziennie = tyle monet, ile wynosi następny limit szlachciców, np. 127)</span></td></tr>
@@ -609,6 +639,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		S.minExchange = Math.max(1, num($('#' + NS + '_mx').val()) || 200);
 		S.calm = $('#' + NS + '_calm').prop('checked');
 		S.prodMode = $('#' + NS + '_pm').prop('checked');
+		S.relayShare = Math.max(10, Math.min(100, num($('#' + NS + '_rs').val()) || 70));
 		S.prodShare = Math.max(1, num($('#' + NS + '_ps').val()) || 50);
 		S.devShare = Math.max(1, num($('#' + NS + '_ds').val()) || 100);
 		S.devPopMax = num($('#' + NS + '_dpm').val()) || 24000;
@@ -670,6 +701,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 			const costK = sinks.reduce((a, t) => a + coinCostOf(t).reduce((x, y) => x + y, 0), 0) / sinks.length;
 			prodInfo = { dev: plan.filter(p => p.dev).length, n: plan.length, perH: perH, coins: Math.round(perH * 24 / costK), levels: !!mineLevels };
 		} else if (S.calm) { calmCoins = calmPlan(plan, sinks); }
+		let throttledN = 0;
+		if (!S.prodMode) { throttleRelays(plan); throttledN = plan.filter(p => p.throttled).length; }
 		// symulacja na kilka godzin: czy coś się przeleje; z ochroną - od razu poprawione paczki
 		const simVillages = villages.filter(v => nodes.indexOf(v) > -1 || sinks.indexOf(v) > -1);
 		let prot = null;
@@ -689,6 +722,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 			Koszt monety: ${sinks.map(t => esc(t.name) + ' ' + coinCostOf(t).join('/') + 'k').join(', ')}<br>
 			${prodInfo ? `<b>Wolne zsyłanie z produkcji:</b> co godzinę ${prodInfo.n - prodInfo.dev} wiosek po ${S.prodShare}% produkcji, ${prodInfo.dev} rozwiniętych po ${S.devShare}% → do mennic ok. <b>${fmt(prodInfo.perH)} tys./h</b> ≈ <b>${prodInfo.coins}</b> monet na dobę. <span class="grey">${prodInfo.levels ? 'Produkcja z poziomów kopalń (przegląd Budynki).' : 'Nie odczytałem poziomów kopalń - przyjęta produkcja bieżącej wioski dla wszystkich.'} Rozwinięta = zagroda ≥ ${S.devPopMax} miejsc zajęta w ≥ ${S.devPopFill}% i ≥ ${S.devPoints} pkt.</span><br>` : ''}
 			${calmCoins ? `<b>Tryb spokojny:</b> cel ${S.coinsPerDay} monet/dobę → dojedzie na ok. <b>${calmCoins.reduce((a, b) => a + b, 0)}</b> (${sinks.map((t, i) => esc(t.name) + ' ' + calmCoins[i]).join(', ')}) - co najmniej tyle, ile wioski produkują, żeby się nie przelewały.<br>` : ''}
+			${throttledN ? `Pośrednicy: ${throttledN} tras wysyła mniej, żeby pośrednik dostawał najwyżej ${S.relayShare}% tego, co sam odda (nie zapcha się przy pakietach).<br>` : ''}
 			Menedżer wysyła realnie co <b>${fmt(turnMinutes())} min</b> <span class="grey">(${S.realEvery > 0 ? 'wpisane ręcznie' : measured && measured.n >= 3 ? 'zmierzone z kupców ' + measured.n + ' tras' : 'za mało danych do pomiaru - przyjęte 2 min'}) - paczki są na tyle większe</span></p>
 			<table class="vis" style="width:100%"><tr><th>Uwzgl.</th><th>Wioska</th><th>Wysyła do</th><th>Pola</th><th>Kurs</th><th>Kupcy</th><th>Przepływ</th><th>Paczka (D/G/Ż tys.)</th><th>Co</th></tr>`;
 		const sinkNames = sinks.map(v => esc(v.name)).join(', ');
@@ -697,7 +731,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 			const p = plan.find(x => x.v === v);
 			const ex = !!excluded[v.coords];
 			html += `<tr class="row_b"><td><input type="checkbox" class="${NS}_inc" data-c="${v.coords}" ${ex ? '' : 'checked'}></td><td>${esc(v.name)} (${v.coords})</td>` +
-				(p ? `<td>${p.isSink ? '<b>' : ''}${esc(p.to.name)}${p.isSink ? ' ★</b>' : ''}</td><td>${fmt(p.d)}</td><td>${Math.round(2 * p.d * S.minutesPerField)} min</td><td>${v.merchants}</td><td>${p.ph ? fmt(p.F) + ' tys./h (' + Math.round(p.share * 100) + '%' + (p.dev ? ' ★' : '') + ')' : p.F + ' tys.'}</td><td>${p.pack.map(x => fmt(x)).join(' / ')}</td><td>${fmtTime(p.every || intervalMinutes())}</td>`
+				(p ? `<td>${p.isSink ? '<b>' : ''}${esc(p.to.name)}${p.isSink ? ' ★</b>' : ''}</td><td>${fmt(p.d)}</td><td>${Math.round(2 * p.d * S.minutesPerField)} min</td><td>${v.merchants}</td><td>${p.ph ? fmt(p.F) + ' tys./h (' + Math.round(p.share * 100) + '%' + (p.dev ? ' ★' : '') + ')' : p.F + ' tys.'}</td><td>${p.pack.map(x => fmt(x)).join(' / ')}${p.throttled ? `<br><span class="grey" style="font-size:10px">↓ mniej - ${esc(p.throttled)} nie nadąża oddawać</span>` : ''}${p.relayIn ? `<br><span class="grey" style="font-size:10px">pośrednik: dostaje ${fmt(Math.min(p.relayIn, p.relayOut * S.relayShare / 100))}, oddaje ${fmt(p.relayOut)} tys./min</span>` : ''}</td><td>${fmtTime(p.every || intervalMinutes())}</td>`
 					: `<td colspan="7" class="grey">${why(v) || 'nic do wysłania'}</td>`) + '</tr>';
 		});
 		html += '</table>';
