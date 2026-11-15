@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dostawy MK - drzewo do celu (bicie monet)
 // @namespace    dostawy-mk-drzewo
-// @version      2.4.0
+// @version      2.4.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @description  Menedżer konta > Dostawy: (1) zaopatrzenie nowych wiosek pod budowę i rekrutację, (2) liczy najszybsze trasy (każda wioska jeden cel, przerzuty przez wioski z kupcami) do wioski bijącej monety i po kliknięciu podmienia harmonogramy dostaw.
@@ -11,7 +11,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.4.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.4.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI */
@@ -186,7 +186,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 			return { max: max, sq: sq, work: work, F: F, load: load };
 		}
 		const better = (a, b) => a.max < b.max - 1e-6 || (Math.abs(a.max - b.max) <= 1e-6 && (a.sq < b.sq - 1e-6 || (Math.abs(a.sq - b.sq) <= 1e-6 && a.work < b.work - 1e-6)));
-		const opts = sinks.map((m, k) => -k - 1).concat([...Array(n).keys()].filter(j => M[j] > 0));
+		// pełny spichlerz (mniej niż packageRoom% wolnego) nie bierze cudzych surowców - najpierw oddaje swoje; inaczej pośrednik puchnie
+		const roomy = j => { const v = nodes[j]; return !v.res || Math.max(...v.res) <= (v.cap || 400000) * (1 - Math.max(0, Math.min(90, S.packageRoom)) / 100); };
+		const opts = sinks.map((m, k) => -k - 1).concat([...Array(n).keys()].filter(j => M[j] > 0 && roomy(j)));
 		const nearest = i => -1 - sinks.map((m, k) => [dist(nodes[i], m), k]).sort((a, b) => a[0] - b[0])[0][1];
 		function search(par) {
 			let cur = evaluate(par), imp = true;
