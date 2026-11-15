@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.10.1
+// @version      1.11.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.10.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.11.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -1625,7 +1625,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		const withPal = villages.filter(v => v.lv && v.lv.snob > 0);
 		const pool = withPal.length >= o.nMint ? withPal : villages;
 		const tot = v => villages.reduce((a, w) => a + dist(v, w), 0);
-		const mints = pool.slice().sort((a, b) => tot(a) - tot(b) || a.id - b.id).slice(0, o.nMint);
+		const fromGroup = o.mintIds && o.mintIds.size ? villages.filter(v => o.mintIds.has(v.id)) : [];
+		const mints = fromGroup.length ? fromGroup : pool.slice().sort((a, b) => tot(a) - tot(b) || a.id - b.id).slice(0, o.nMint);
 		const mintIds = new Set(mints.map(m => m.id));
 		const senders = villages.filter(v => !mintIds.has(v.id));
 		const capAll = villages.reduce((a, v) => a + v.cap, 0), target = o.pct / 100 * capAll;
@@ -1661,6 +1662,12 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		const villages = Object.values(all).map(v => Object.assign(v, { lv: (bld[v.id] || {}).lv || {} }));
 		if (!villages.length) throw new Error('Nie odczytałem przeglądu produkcji.');
 		const byId = {}; villages.forEach(v => { byId[v.id] = v; });
+		// mennice = wioski z grupy „bicie monet” (jeśli taka grupa istnieje)
+		let mintIds = null, mintGroup = null;
+		try {
+			const grp = (await getGroups()).find(g => /bicie\s*monet|mennic/i.test(g.name));
+			if (grp) { mintGroup = grp.name; mintIds = await loadIds(grp.id); try { await get(ovUrl('prod', cur)); } catch (e) { /* ignore */ } }
+		} catch (e) { /* ignore */ }
 		const trades = [];
 		const $p = inert(await get('/game.php?screen=overview_villages&mode=trader&type=all&page=-1' + sitter));
 		$p.find('#trades_table tr').each(function () {
@@ -1681,12 +1688,12 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			if (outgoing && byId[home] && byId[to]) ready += dist(byId[home], byId[to]) * S.minutesPerField;
 			if (n) trades.push({ home, to, n, ready, res, outgoing });
 		});
-		return { villages, trades, ts: Date.now() };
+		return { villages, trades, mintIds, mintGroup, ts: Date.now() };
 	}
 	let thruData = null;
 	function renderThru() {
 		const o = loadThru();
-		const p = thruPlan(thruData.villages, thruData.trades, o);
+		const p = thruPlan(thruData.villages, thruData.trades, Object.assign({}, o, { mintIds: thruData.mintIds }));
 		const hhmm = min => new Date(Date.now() + min * 60000).toLocaleString('pl-PL', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
 		const pct = x => Math.round(100 * x / p.capAll);
 		const mil = x => (x / 1e6).toFixed(1).replace('.', ',') + ' mln';
@@ -1708,7 +1715,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 				przerwa między kursami <input type="number" id="${NS}_t_gap" min="0" max="120" value="${o.gap}" style="width:40px"> min
 				<a href="#" class="btn" id="${NS}_t_calc">Przelicz</a> <a href="#" class="btn" id="${NS}_t_refetch">↻ Pobierz dane</a>
 			</td></tr></tbody></table>
-			<p>Mennice (najbardziej centralne z pałacem): <b>${p.mints.map(m => vlink(m)).join(', ')}</b></p>
+			<p>Mennice ${thruData.mintGroup && thruData.mintIds && p.mints.length && thruData.mintIds.size ? `(grupa „${esc(thruData.mintGroup)}”, ${p.mints.length})` : '(brak grupy „bicie monet” – biorę najbardziej centralne z pałacem)'}: <b>${p.mints.slice(0, 12).map(m => vlink(m)).join(', ')}${p.mints.length > 12 ? ' …' : ''}</b></p>
 			<p>${verdict}</p>
 			<p>Cel: <b>${mil(p.target)}</b> (${o.pct}% z ${mil(p.capAll)}) · możliwe od teraz w ${o.hours} h: <b>${mil(p.now)}</b> (${pct(p.now)}%) · maksimum przy wszystkich kupcach: <b>${mil(p.limit)}</b> (${pct(p.limit)}%)<br>
 			<span class="grey">W drodze do mennic już jest ${mil(toMints)} (nie wliczone). Liczone: każdy kupiec woził do najbliższej mennicy, kolejne kursy co 2×dojazd + przerwa; kupcy będący w drodze ruszają dopiero po powrocie.</span></p>
