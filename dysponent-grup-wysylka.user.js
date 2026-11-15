@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.12.0
+// @version      1.13.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.12.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.13.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -1668,9 +1668,16 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		const blockers = drain.filter(d => d.loads > 0).sort((a, b) => b.t - a.t);
 		const readyIn = blockers.length ? blockers[0].t : 0;
 		const needTotal = RES.map((_, i) => drain.reduce((a, d) => a + d.need[i], 0));
+		// ZSYŁ OBECNEGO ZAPASU: ile z tego, co leży teraz w wioskach, kupcy dowiozą do mennic po upływie czasu t
+		const byOf = r => t => r.groups.reduce((a, g) => a + (t >= g.t + r.T1 ? (1 + Math.floor((t - g.t - r.T1) / r.round)) * g.n : 0), 0);
+		const stockRows = rows.map(r => ({ by: byOf(r), stock: sum3(r.v.res) }));
+		const stockTotal = stockRows.reduce((a, x) => a + x.stock, 0);
+		const delivered = t => stockRows.reduce((a, x) => a + Math.min(x.stock, x.by(t) * carry), 0);
+		const timeFor = f => { const want = f * stockTotal; if (delivered(240 * 60) < want - 1) return Infinity; let lo = 0, hi = 240 * 60; while (hi - lo > 1) { const mid = (lo + hi) / 2; if (delivered(mid) >= want) hi = mid; else lo = mid; } return Math.ceil(hi); };
+		const ship = { total: stockTotal, pts: [30, 60, 120, 240, 480, 720, 1440, 2880].map(t => ({ t, d: delivered(t) })), t50: timeFor(0.5), t90: timeFor(0.9), t100: timeFor(1) };
 		const mintRoom = RES.map((_, i) => mints.reduce((a, m) => a + Math.max(0, m.cap - m.res[i] - ((incTo[m.id] || [0, 0, 0])[i])), 0));
 		const first = scan.find(s => s.cap >= target);
-		return { drain, blockers, readyIn, needTotal, mintRoom, pkg: o.pkg, mints, rows, target, capAll, now: scan[0].cap, limit, scan, first: first ? first.t : null, hours: o.hours, pct: o.pct };
+		return { ship, drain, blockers, readyIn, needTotal, mintRoom, pkg: o.pkg, mints, rows, target, capAll, now: scan[0].cap, limit, scan, first: first ? first.t : null, hours: o.hours, pct: o.pct };
 	}
 	async function thruFetch() {
 		msg.info('Przepustowość: pobieram dane…', 3000);
@@ -1735,6 +1742,11 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 					: '<span style="color:#a00"><b>⛔ Przynajmniej jedna wioska nie zdąży w 240 h</b> – za mało kupców.</span>'}<br>
 			<span class="grey">Do wywiezienia razem: ${resList(p.needTotal) || '–'} · wolne miejsce w mennicach: ${roomTxt || '<b>brak</b>'}${needSum > roomSum ? ' <span style="color:#a00">– mennice nie pomieszczą wszystkiego naraz, liczy się tempo bicia</span>' : ''}</span></p>
 			${bl.length ? `<table class="vis" style="width:100%"><tbody><tr><th>Wioska blokująca pakiet</th><th>Nadmiar do wywiezienia</th><th>Kursów</th><th>Kupcy</th><th>Gotowa za</th></tr>${blRows}</tbody></table>` : ''}`;
+		const sh = p.ship, ft = t => (isFinite(t) ? fmtMin(t) : '>240 h');
+		const shipHtml = `<h4>🚚 Zsył obecnego zapasu do mennic</h4>
+			<p>Teraz w wioskach: <b>${mil(sh.total)}</b>. Kupcy dowiozą: połowę za <b>${ft(sh.t50)}</b>, 90% za <b>${ft(sh.t90)}</b>, całość za <b>${ft(sh.t100)}</b>.<br>
+			<span class="grey">Tempo na początku: ${mil(sh.pts[1].d)}/h (pierwsza godzina) · uwzględnia kupców będących w drodze i dojazd do najbliższej mennicy; bez produkcji w trakcie.</span></p>
+			<table class="vis" style="width:100%"><tbody><tr><th>Po</th><th>Dowiezione</th><th>% zapasu</th><th>Tempo (średnio)</th></tr>${sh.pts.map(x => `<tr class="row_b"><td>${fmtMin(x.t)}</td><td>${mil(x.d)}</td><td>${sh.total ? Math.round(100 * x.d / sh.total) : 0}%</td><td>${mil(x.d / (x.t / 60))}/h</td></tr>`).join('')}</tbody></table>`;
 		const when = new Date(thruData.ts).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
 		Dialog.show(NS, `
 			<h3>📊 Przepustowość do mennic</h3>
@@ -1751,6 +1763,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			<p>${verdict}</p>
 			<p>Cel: <b>${mil(p.target)}</b> (${o.pct}% z ${mil(p.capAll)}) · możliwe od teraz w ${o.hours} h: <b>${mil(p.now)}</b> (${pct(p.now)}%) · maksimum przy wszystkich kupcach: <b>${mil(p.limit)}</b> (${pct(p.limit)}%)<br>
 			<span class="grey">W drodze do mennic już jest ${mil(toMints)} (nie wliczone). Liczone: każdy kupiec woził do najbliższej mennicy, kolejne kursy co 2×dojazd + przerwa; kupcy będący w drodze ruszają dopiero po powrocie.</span></p>
+			${shipHtml}
 			${pkgHtml}
 			<h4>Kiedy się udrożni (start za…)</h4><table class="vis" style="width:100%"><tbody><tr><th>Start</th><th>Przepustowość ${o.hours} h</th><th>% spichlerzy</th><th></th></tr>${tl}</tbody></table>
 			<h4>Najdalsze wioski (ograniczają przepustowość)</h4><table class="vis" style="width:100%"><tbody><tr><th>Wioska</th><th>Kupcy wolni/łącznie</th><th>Pól do mennicy</th><th>Pełny kurs</th><th>Ostatni wróci za</th></tr>${slow}</tbody></table>
