@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.9.0
+// @version      1.10.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.9.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.10.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -896,8 +896,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			.on('click', e => { e.preventDefault(); try { showLauncherDialog(); } catch (ex) { handleError(ex); } });
 		const fb = favButtons('margin-left:6px');
 		const host = $('#content_value h2, #content_value h3').first();
-		const adv = advButton('margin-left:6px'), reg = regButton();
-		host.length ? host.after(btn, adv, reg, ...fb) : $('#content_value').prepend(btn, adv, reg, ...fb);
+		const adv = advButton('margin-left:6px'), reg = regButton(), thr = thruButton();
+		host.length ? host.after(btn, adv, reg, thr, ...fb) : $('#content_value').prepend(btn, adv, reg, thr, ...fb);
 	}
 
 	// Rynek > Poproś o surowce: ta sama logika dla bieżącej wioski, z ostatnio zapisanymi ustawieniami (tryb, %, dawcy)
@@ -924,8 +924,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			return /Poproś o surowce|Request resources|Rohstoffe anfordern/i.test(this.value || $(this).text());
 		}).first();
 		const fb = favButtons();
-		if (gameBtn.length) gameBtn.before(btn, btnG, advButton(), regButton(), ...fb);
-		else { const l = $('#village_list').first(); l.length ? l.before(btn, btnG, advButton(), regButton(), ...fb) : $('#content_value').prepend(btn, btnG, advButton(), regButton(), ...fb); }
+		if (gameBtn.length) gameBtn.before(btn, btnG, advButton(), regButton(), thruButton(), ...fb);
+		else { const l = $('#village_list').first(); l.length ? l.before(btn, btnG, advButton(), regButton(), thruButton(), ...fb) : $('#content_value').prepend(btn, btnG, advButton(), regButton(), thruButton(), ...fb); }
 	}
 
 	// ================= DORADCA =================
@@ -1609,6 +1609,134 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			});
 	}
 
+	// ================= PRZEPUSTOWOŚĆ DO MENNIC =================
+	// Ile surowców kupcy zdołają dowieźć do mennic (N najbardziej centralnych wiosek z pałacem) w oknie czasu, z uwzględnieniem kupców
+	// będących w drodze (kiedy wrócą), i od kiedy cel (np. 150% pojemności wszystkich spichlerzy w 48 h) jest osiągalny.
+	const TKEY = NS + '_thru_' + game_data.world;
+	function loadThru() {
+		let o = {};
+		try { o = JSON.parse(localStorage.getItem(TKEY) || 'null') || {}; } catch (e) { /* ignore */ }
+		const n = (k, d, lo, hi) => { const v = Number(o[k]); return o[k] !== undefined && isFinite(v) && v >= lo && v <= hi ? v : d; };
+		return { hours: n('hours', 48, 1, 240), pct: n('pct', 150, 10, 1000), nMint: n('nMint', 3, 1, 20), gap: n('gap', 10, 0, 120) };
+	}
+	// villages: [{id,name,x,y,cap,tradersFree,tradersTotal,lv}], trades: [{home,n,ready(min),res,to}]
+	function thruPlan(villages, trades, o) {
+		const mpf = S.minutesPerField, carry = S.carry, H = o.hours * 60;
+		const withPal = villages.filter(v => v.lv && v.lv.snob > 0);
+		const pool = withPal.length >= o.nMint ? withPal : villages;
+		const tot = v => villages.reduce((a, w) => a + dist(v, w), 0);
+		const mints = pool.slice().sort((a, b) => tot(a) - tot(b) || a.id - b.id).slice(0, o.nMint);
+		const mintIds = new Set(mints.map(m => m.id));
+		const senders = villages.filter(v => !mintIds.has(v.id));
+		const capAll = villages.reduce((a, v) => a + v.cap, 0), target = o.pct / 100 * capAll;
+		const rows = senders.map(v => {
+			const m = mints.reduce((a, b) => (dist(v, a) <= dist(v, b) ? a : b));
+			const T1 = Math.max(1, dist(v, m) * mpf), round = 2 * T1 + o.gap;
+			const groups = [{ n: Math.max(0, v.tradersFree), t: 0 }];
+			let busy = 0;
+			trades.filter(t => t.home === v.id).forEach(t => { groups.push({ n: t.n, t: t.ready }); busy += t.n; });
+			const rest = Math.max(0, v.tradersTotal - v.tradersFree - busy);
+			if (rest) groups[0].n += rest;
+			return { v, m, T1, round, groups, free: v.tradersFree, total: v.tradersTotal, lastBack: Math.max(0, ...groups.map(g => g.t)) };
+		});
+		const cap = t0 => rows.reduce((a, r) => a + r.groups.reduce((q, g) => {
+			const rel = Math.max(g.t, t0) - t0 + r.T1;
+			return q + (rel <= H ? (1 + Math.floor((H - rel) / r.round)) * g.n * carry : 0);
+		}, 0), 0);
+		const step = 30, maxScan = 72 * 60;
+		const scan = [];
+		for (let t = 0; t <= maxScan; t += step) scan.push({ t, cap: cap(t) });
+		const limit = cap(1e9);
+		const first = scan.find(s => s.cap >= target);
+		return { mints, rows, target, capAll, now: scan[0].cap, limit, scan, first: first ? first.t : null, hours: o.hours, pct: o.pct };
+	}
+	async function thruFetch() {
+		msg.info('Przepustowość: pobieram dane…', 3000);
+		const cur = currentGroupId();
+		let all = {}, bld = {};
+		try {
+			all = await loadProd('0');
+			try { bld = await loadBuildings('0', ['snob']); } catch (e) { /* brak przeglądu budynków */ }
+		} finally { try { await get(ovUrl('prod', cur)); } catch (e) { /* ignore */ } }
+		const villages = Object.values(all).map(v => Object.assign(v, { lv: (bld[v.id] || {}).lv || {} }));
+		if (!villages.length) throw new Error('Nie odczytałem przeglądu produkcji.');
+		const byId = {}; villages.forEach(v => { byId[v.id] = v; });
+		const trades = [];
+		const $p = inert(await get('/game.php?screen=overview_villages&mode=trader&type=all&page=-1' + sitter));
+		$p.find('#trades_table tr').each(function () {
+			const tr = $(this), icon = tr.find('img[title]').first().attr('title') || '';
+			const outgoing = /wychodz/i.test(icon), ret = /powr/i.test(icon);
+			if (!outgoing && !ret) return;
+			const ids = tr.find('a[href*="info_village"]').map((i, a) => Number((a.getAttribute('href').match(/[?&]id=(\d+)/) || [])[1])).get();
+			const tm = (tr.find('.timer').first().text().match(/(\d+):(\d+):(\d+)/) || []);
+			if (!ids.length || !tm.length) return;
+			const sec = (+tm[1]) * 3600 + (+tm[2]) * 60 + (+tm[3]);
+			const tds = tr.children('td');
+			const tdTimer = tr.find('.timer').first().closest('td');
+			const n = num(tds.eq(tds.index(tdTimer) + 1).text());
+			let res = 0;
+			tds.last().find('.nowrap').each(function () { res += num($(this).text()); });
+			const home = ids[0], to = ids[1];
+			let ready = sec / 60;
+			if (outgoing && byId[home] && byId[to]) ready += dist(byId[home], byId[to]) * S.minutesPerField;
+			if (n) trades.push({ home, to, n, ready, res, outgoing });
+		});
+		return { villages, trades, ts: Date.now() };
+	}
+	let thruData = null;
+	function renderThru() {
+		const o = loadThru();
+		const p = thruPlan(thruData.villages, thruData.trades, o);
+		const hhmm = min => new Date(Date.now() + min * 60000).toLocaleString('pl-PL', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
+		const pct = x => Math.round(100 * x / p.capAll);
+		const mil = x => (x / 1e6).toFixed(1).replace('.', ',') + ' mln';
+		const stock = thruData.villages.reduce((a, v) => a + sum3(v.res), 0);
+		const toMints = thruData.trades.filter(t => p.mints.some(m => m.id === t.to) && t.outgoing).reduce((a, t) => a + t.res, 0);
+		const verdict = p.first === 0 ? `<span style="color:#060"><b>✅ Już teraz</b> da się dowieźć ${o.pct}% w ${o.hours} h.</span>`
+			: p.first !== null ? `<span style="color:#a60"><b>⏳ Luz będzie za ${fmtMin(p.first)}</b> (start ok. ${hhmm(p.first)}) – wtedy kupcy wystarczą na ${o.pct}% w ${o.hours} h.</span>`
+				: p.limit >= p.target ? '<span style="color:#a60"><b>⏳ Później niż za 72 h</b> – kupcy wracają zbyt długo.</span>'
+					: `<span style="color:#a00"><b>⛔ Nie wystarczy nawet na wszystkich kupcach</b> (max ${pct(p.limit)}% przy ${o.hours} h) – za mało kupców albo za daleko od mennic.</span>`;
+		const slow = p.rows.slice().sort((a, b) => b.T1 - a.T1).slice(0, 12).map(r => `<tr class="row_b"><td>${vlink(r.v)}</td><td>${Math.round(r.free)}/${r.total}</td><td>${dist(r.v, r.m).toFixed(0)}</td><td>${fmtMin(r.round)}</td><td>${r.lastBack > 0 ? fmtMin(r.lastBack) : '–'}</td></tr>`).join('');
+		const tl = p.scan.filter(s => s.t % 120 === 0 && s.t <= 24 * 60).map(s => `<tr class="row_b"><td>${s.t ? 'za ' + fmtMin(s.t) : 'teraz'}</td><td>${mil(s.cap)}</td><td><b>${pct(s.cap)}%</b></td><td>${s.cap >= p.target ? '✅' : ''}</td></tr>`).join('');
+		const when = new Date(thruData.ts).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' });
+		Dialog.show(NS, `
+			<h3>📊 Przepustowość do mennic</h3>
+			<div style="max-height:75vh;overflow:auto;-webkit-overflow-scrolling:touch">
+			<p class="grey">Dane z ${when} · ${thruData.villages.length} wiosek</p>
+			<table class="vis" style="width:100%"><tbody><tr class="row_b"><td>
+				cel <input type="number" id="${NS}_t_pct" min="10" max="1000" value="${o.pct}" style="width:55px">% pojemności wszystkich spichlerzy w <input type="number" id="${NS}_t_h" min="1" max="240" value="${o.hours}" style="width:45px"> h ·
+				mennic <input type="number" id="${NS}_t_n" min="1" max="20" value="${o.nMint}" style="width:35px"> ·
+				przerwa między kursami <input type="number" id="${NS}_t_gap" min="0" max="120" value="${o.gap}" style="width:40px"> min
+				<a href="#" class="btn" id="${NS}_t_calc">Przelicz</a> <a href="#" class="btn" id="${NS}_t_refetch">↻ Pobierz dane</a>
+			</td></tr></tbody></table>
+			<p>Mennice (najbardziej centralne z pałacem): <b>${p.mints.map(m => vlink(m)).join(', ')}</b></p>
+			<p>${verdict}${stock < p.target ? `<br><span style="color:#a60">⚠ Ale surowców na kontach jest tylko ${Math.round(100 * stock / p.target)}% celu – transport nie jest wąskim gardłem, ogranicza go zapas i produkcja.</span>` : ''}</p>
+			<p>Cel: <b>${mil(p.target)}</b> (${o.pct}% z ${mil(p.capAll)}) · możliwe od teraz w ${o.hours} h: <b>${mil(p.now)}</b> (${pct(p.now)}%) · maksimum przy wszystkich kupcach: <b>${mil(p.limit)}</b> (${pct(p.limit)}%)<br>
+			<span class="grey">Na kontach leży teraz ${mil(stock)} (${pct(stock)}% spichlerzy) – tyle realnie jest do wywiezienia z zapasu, resztę dołoży produkcja. W drodze do mennic już jest ${mil(toMints)} (nie wliczone). Liczone: każdy kupiec woził do najbliższej mennicy, kolejne kursy co 2×dojazd + przerwa; kupcy będący w drodze ruszają dopiero po powrocie.</span></p>
+			<h4>Kiedy się udrożni (start za…)</h4><table class="vis" style="width:100%"><tbody><tr><th>Start</th><th>Przepustowość ${o.hours} h</th><th>% spichlerzy</th><th></th></tr>${tl}</tbody></table>
+			<h4>Najdalsze wioski (ograniczają przepustowość)</h4><table class="vis" style="width:100%"><tbody><tr><th>Wioska</th><th>Kupcy wolni/łącznie</th><th>Pól do mennicy</th><th>Pełny kurs</th><th>Ostatni wróci za</th></tr>${slow}</tbody></table>
+			</div>`);
+		const apply = () => {
+			const g = (id, d, lo, hi) => { const v = Number($('#' + NS + id).val()); return isFinite(v) && v >= lo && v <= hi ? v : d; };
+			try { localStorage.setItem(TKEY, JSON.stringify({ pct: g('_t_pct', o.pct, 10, 1000), hours: g('_t_h', o.hours, 1, 240), nMint: g('_t_n', o.nMint, 1, 20), gap: g('_t_gap', o.gap, 0, 120) })); } catch (e) { /* ignore */ }
+		};
+		$('#' + NS + '_t_calc').on('click', e => { e.preventDefault(); apply(); renderThru(); });
+		$('#' + NS + '_t_refetch').on('click', e => { e.preventDefault(); apply(); runThru(true).catch(handleError); });
+	}
+	async function runThru(refetch) {
+		if (!thruData || refetch) thruData = await thruFetch();
+		renderThru();
+	}
+	function thruButton(style) {
+		return $(`<a href="#" class="btn ${NS}_thrubtn" style="margin:4px 6px 4px 0;${style || ''}" title="Ile surowców kupcy dowiozą do mennic w zadanym czasie i od kiedy jest luz">📊 Przepustowość</a>`)
+			.on('click', e => {
+				e.preventDefault();
+				const b = $(e.currentTarget);
+				b.addClass('btn-disabled');
+				runThru(true).catch(handleError).then(() => b.removeClass('btn-disabled'));
+			});
+	}
+
 	// ================= RATUSZ =================
 	// Przycisk 📦 przy budynku i „Następny z Menedżera”: brakujące na budowę surowce wysyłane są tak samo jak w pozostałych trybach
 	// (lista wysyłek, wiersz znika po kliknięciu). Dawcy wg ostatnio zapisanych ustawień okna „Dysponent – grupy”.
@@ -1758,7 +1886,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		$('<a href="#" style="margin-left:8px">↓ pokaż</a>').on('click', e => { e.preventDefault(); row[0].scrollIntoView({ behavior: 'smooth', block: 'center' }); }).appendTo(bar);
 	}
 
-	if (typeof module !== 'undefined' && module.exports) module.exports = { regionDist, adviseCore, allocate, prodPerHour, mixPlan, npcDeal, regionPlan, kmeans, _renderReg: d => { regData = d; renderRegions(); }, _render: d => { advData = d; renderAdvice(); } };
+	if (typeof module !== 'undefined' && module.exports) module.exports = { thruPlan, regionDist, adviseCore, allocate, prodPerHour, mixPlan, npcDeal, regionPlan, kmeans, _renderReg: d => { regData = d; renderRegions(); }, _render: d => { advData = d; renderAdvice(); } };
 
 	try {
 		if (game_data.screen === 'market' && location.href.includes('mode=call')) initMarket();
