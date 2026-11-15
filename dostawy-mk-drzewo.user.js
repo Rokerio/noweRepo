@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dostawy MK - drzewo do celu (bicie monet)
 // @namespace    dostawy-mk-drzewo
-// @version      2.3.0
+// @version      2.3.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @description  Menedżer konta > Dostawy: (1) zaopatrzenie nowych wiosek pod budowę i rekrutację, (2) liczy najszybsze trasy (każda wioska jeden cel, przerzuty przez wioski z kupcami) do wioski bijącej monety i po kliknięciu podmienia harmonogramy dostaw.
@@ -11,7 +11,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.3.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.3.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI */
@@ -48,6 +48,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		devPopMax: 24000,            // rozwinięta: zagroda co najmniej tyle miejsc (24000 = poziom 30)
 		devPopFill: 95,              // ...zapełniona co najmniej w tylu %
 		devPoints: 9000,             // ...i wioska ma co najmniej tyle punktów
+		protectMints: false,         // ochrona pilnuje też spichlerzy mennic (false = mennice pilnujesz sam, wymianą)
 		relayShare: 70               // pośrednik dostaje od swoich wiosek najwyżej tyle % tego, co sam zdąży oddać (reszta kupców na własny zapas)
 	};
 	// ===============================================================================
@@ -468,6 +469,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		const before = simulate(routes.map(r => ({ s: r.s, t: r.t, pack: r.orig, every: r.every })), villages, sinks, minutes);
 		let cur = simulate(routes, villages, sinks, minutes);
 		const blocked = new Set();
+		if (!S.protectMints) { sinks.forEach(t => [0, 1, 2].forEach(k => blocked.add(t.coords + k))); }	// mennice pilnujesz sam
 		for (let it = 0; it < 80; it++) {
 			let worst = null;
 			cur.st.forEach((x, v) => x.lost.forEach((l, k) => {
@@ -582,7 +584,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				<tr><td>Pomiń wioski</td><td><input id="${NS}_x" size="24" value="${esc(S.exclude)}"> <span class="grey">współrzędne po przecinku</span> · dalej niż <input id="${NS}_md" size="2" value="${S.maxDist}"> pól od celu pomijaj</td></tr>
 				<tr><td>Przystanki / paczka</td><td>najwyżej <input id="${NS}_hops" size="2" value="${S.maxHops}"> przystanki, paczka min <input id="${NS}_minp" size="2" value="${S.minPerRes}"> max <input id="${NS}_max" size="3" value="${S.maxPerRes}"> tys. jednego surowca na turę</td></tr>
 				<tr><td>Pośrednik dostaje najwyżej</td><td><input id="${NS}_rs" size="3" value="${S.relayShare}">% tego, co sam zdąży oddać <span class="grey">(reszta jego kupców na własny zapas - przy pakietach pośrednik się nie przeleje; 100 = bez ograniczenia)</span></td></tr>
-				<tr><td>Ochrona przed przelaniem</td><td><label><input type="checkbox" id="${NS}_prot" ${S.protect ? 'checked' : ''}> licz na</label> <input id="${NS}_ph" size="2" value="${S.protectHours}"> h naprzód <span class="grey">(np. na noc) - zmniejsza paczki, które przelałyby spichlerz mennicy albo pośrednika</span></td></tr>
+				<tr><td>Ochrona przed przelaniem</td><td><label><input type="checkbox" id="${NS}_prot" ${S.protect ? 'checked' : ''}> licz na</label> <input id="${NS}_ph" size="2" value="${S.protectHours}"> h naprzód <span class="grey">(np. na noc) - zmniejsza paczki, które przelałyby spichlerz pośrednika</span> <label style="margin-left:8px"><input type="checkbox" id="${NS}_pmint" ${S.protectMints ? 'checked' : ''}> także mennic</label></td></tr>
 				<tr><td>Wolne zsyłanie z produkcji</td><td><label><input type="checkbox" id="${NS}_pm" ${S.prodMode ? 'checked' : ''}> co godzinę prosto do najbliższej mennicy</label> <input id="${NS}_ps" size="3" value="${S.prodShare}">% produkcji wioski, rozwinięta <input id="${NS}_ds" size="3" value="${S.devShare}">%<br><span class="grey">rozwinięta = zagroda ≥ <input id="${NS}_dpm" size="5" value="${S.devPopMax}"> miejsc, zajęta ≥ <input id="${NS}_dpf" size="2" value="${S.devPopFill}">%, wioska ≥ <input id="${NS}_dp" size="5" value="${S.devPoints}"> pkt</span></td></tr>
 				<tr><td>Tryb spokojny</td><td><label><input type="checkbox" id="${NS}_calm" ${S.calm ? 'checked' : ''}> zamiast pełnych obrotów: surowce na</label> <input id="${NS}_cpd" size="4" value="${S.coinsPerDay}"> monet na dobę <span class="grey">(1 szlachcic dziennie = tyle monet, ile wynosi następny limit szlachciców, np. 127)</span></td></tr>
 				<tr><td>Wymiana opłaca się od</td><td><input id="${NS}_mx" size="4" value="${S.minExchange}"> tys. surowca naraz <span class="grey">(np. 10 PP za wymianę u handlarza)</span></td></tr>
@@ -636,6 +638,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		S.minPerRes = Math.max(1, num($('#' + NS + '_minp').val()));
 		S.splitRes = $('#' + NS + '_split').prop('checked');
 		S.protect = $('#' + NS + '_prot').prop('checked');
+		S.protectMints = $('#' + NS + '_pmint').prop('checked');
 		S.minExchange = Math.max(1, num($('#' + NS + '_mx').val()) || 200);
 		S.calm = $('#' + NS + '_calm').prop('checked');
 		S.prodMode = $('#' + NS + '_pm').prop('checked');
@@ -808,14 +811,19 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		const RN = ['drewno', 'glina', 'żelazo'];
 		const lostList = sim => {
 			const out = [];
-			sim.st.forEach((x, v) => x.lost.forEach((l, k) => { if (l >= 1000) { out.push(`${esc(v.name)}: ${RN[k]} ${K(l)} (pełne od ${clock(x.fullAt[k])})`); } }));
+			sim.st.forEach((x, v) => x.lost.forEach((l, k) => { if (l >= 1000 && (S.protectMints || sinks.indexOf(v) < 0)) { out.push(`${esc(v.name)}: ${RN[k]} ${K(l)} (pełne od ${clock(x.fullAt[k])})`); } }));
 			return out;
 		};
 		const b = prot.before, a = prot.after;
 		const lb = lostList(b), la = a ? lostList(a) : [];
 		let h = `<div class="vis" style="margin-top:8px;padding:6px"><b>Symulacja na ${S.protectHours} h (do ${clock(prot.minutes)})</b> <span class="grey">- zapasy teraz, kupcy, produkcja ~${Math.round(prodPerMinute() * 60 / 100) / 10} tys./h, mennica bije od razu</span><br>`;
 		h += 'Monety: ' + sinks.map((v, i) => `${esc(v.name)} <b>${b.coins[i]}${a ? ' → ' + a.coins[i] : ''}</b>`).join(', ') + '<br>';
-		h += lb.length ? `<span style="color:#a00">Bez zmian przeleje się: ${lb.join('; ')}</span><br>` : 'Nic się nie przeleje.<br>';
+		h += lb.length ? `<span style="color:#a00">Bez zmian przeleje się: ${lb.join('; ')}</span><br>` : (S.protectMints ? 'Nic się nie przeleje.<br>' : 'Poza mennicami nic się nie przeleje.<br>');
+		if (!S.protectMints) {
+			const ml = [];
+			sinks.forEach(t => { const x = b.st.get(t); if (x) { x.lost.forEach((l, k) => { if (l >= 1000) { ml.push(`${esc(t.name)} ${RN[k]} pełne od ${clock(x.fullAt[k])}`); } }); } });
+			if (ml.length) { h += `<span class="grey">Mennice (pilnujesz sam, ochrona ich nie rusza): ${ml.join('; ')}</span><br>`; }
+		}
 		if (a) {
 			if (prot.changes.length) {
 				h += `<b>Ochrona zmienia ${prot.changes.length} tras</b> (wysyłają mniej, nadmiar zostaje u nich):<table class="vis" style="width:100%"><tr><th>Trasa</th><th>Było</th><th>Teraz</th></tr>` +
