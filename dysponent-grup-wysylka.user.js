@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dysponent Grup – wysyłka
 // @namespace    dysponent-grup-wysylka
-// @version      1.8.1
+// @version      1.9.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js
 // @description  Jak Dysponent Grup, ale zamiast „Poproś o surowce” wysyła bezpośrednio: dla wybranych grup biorców (uzupełnij do X% / pod budowę) dobiera najbliższych dawców z wybranych grup i pokazuje listę wysyłek. Po kliknięciu „Wyślij” wiersz znika, więc następną klikasz w tym samym miejscu. Guzik 🧠 Doradca: pobiera dane i układa raport (przelewające się spichlerze, zagroda/spichlerz 30, handlarz, z limitem blokady kupców). W Ratuszu przy każdym budynku jest przycisk 📦 (oraz „Następny z Menedżera”), który wysyła brakujące na budowę surowce w ten sam sposób.
@@ -15,7 +15,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.8.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponent-grup-wysylka']={v:'1.9.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI, Dialog, TribalWars */
@@ -1419,6 +1419,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 	}
 
 	// Drugi etap: po wymianie u handlarza centrala rozsyła nadwyżki do wiosek swojego rejonu (do średniej rejonu).
+	// Cel wypełnienia: średnia rejonu; dla zwożonego surowca (np. gliny) – nie więcej niż średnia pozostałych dwóch,
+	// żeby po rozwiezieniu było go „tyle co reszty”.
+	const distTarget = (mean, skipR) => mean.map((m, i) => i === skipR ? Math.min(m, mean.filter((_, j) => j !== i).reduce((a, x) => a + x, 0) / 2) : m);
 	function regionDist(villages, incoming, o) {
 		let saved = null;
 		try { saved = JSON.parse(localStorage.getItem(RGKEY) || 'null'); } catch (e) { /* ignore */ }
@@ -1426,7 +1429,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 		const byId = {}; villages.forEach(v => { byId[v.id] = v; });
 		let groups = [];
 		if (saved && saved.regions && saved.regions.length) groups = saved.regions.map(g => ({ hub: byId[g.hub], members: g.members.map(i => byId[i]).filter(Boolean) })).filter(g => g.hub && g.members.length);
-		const skipR = saved && saved.r !== undefined ? saved.r : -1;
+		const gf = RES.map((_, i) => villages.reduce((q, v) => q + v.res[i] + v.inc[i], 0));
+		const skipR = saved && saved.r !== undefined ? saved.r : gf.indexOf(Math.max(...gf));
 		if (!groups.length) {
 			const k = o.k > 0 ? Math.min(o.k, villages.length) : Math.max(1, Math.round(villages.length / 12));
 			groups = kmeans(villages, k).map(g => {
@@ -1439,20 +1443,21 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			const all = g.members.includes(g.hub) ? g.members : g.members.concat(g.hub);
 			const hub = g.hub;
 			const capSum = all.reduce((a, v) => a + v.cap, 0);
-			const mean = RES.map((_, i) => all.reduce((a, v) => a + v.res[i] + v.inc[i], 0) / Math.max(1, capSum));
+			const mean0 = RES.map((_, i) => all.reduce((a, v) => a + v.res[i] + v.inc[i], 0) / Math.max(1, capSum));
+			const mean = distTarget(mean0, skipR);
 			// dawcą jest KAŻDA wioska rejonu, która ma dany surowiec ponad średnią rejonu (centrala po wymianie też)
 			const donors = all.filter(v => v.tradersFree > S.tradersSafeguard).map(v => Object.assign({}, v, {
-				keepOwn: RES.map((_, i) => i === skipR ? v.res[i] : Math.ceil(mean[i] * v.cap))
+				keepOwn: RES.map((_, i) => Math.ceil(mean[i] * v.cap))
 			}));
 			const items = all.map(v => ({
 				target: v.id, name: v.name, v,
-				need: RES.map((_, i) => i === skipR ? 0 : floor1000(Math.max(0, mean[i] * v.cap - v.res[i] - v.inc[i]))),
+				need: RES.map((_, i) => floor1000(Math.max(0, mean[i] * v.cap - v.res[i] - v.inc[i]))),
 				headroom: RES.map((_, i) => Math.max(0, v.cap - v.res[i] - v.inc[i])), what: '🗺️ w rejonie'
 			})).filter(it => it.need.some(n => n >= S.carry)).sort((a, b) => sum3(b.need) - sum3(a.need));
 			const out = items.length && donors.length ? allocate(items, donors, 'near', null).sends : [];
 			const gave = out.reduce((a, s) => a.map((n, i) => n + s.res[i]), [0, 0, 0]);
 			const wantedSum = items.reduce((a, it) => a + sum3(it.need), 0), gaveSum = sum3(gave);
-			const surplus = all.reduce((a, v) => a + RES.reduce((q, _, i) => q + (i === skipR ? 0 : Math.max(0, v.res[i] - Math.ceil(mean[i] * v.cap))), 0), 0);
+			const surplus = all.reduce((a, v) => a + RES.reduce((q, _, i) => q + Math.max(0, v.res[i] - Math.ceil(mean[i] * v.cap)), 0), 0);
 			const why = !items.length ? '✔ wioski rejonu mają już średnią'
 				: !donors.length ? '⛔ w całym rejonie brak wolnych kupców – poczekaj, aż wrócą'
 				: surplus < S.carry ? `⚠ nikt w rejonie nie ma nadwyżki ponad średnią (średnio ${Math.round(100 * (mean[0] + mean[1] + mean[2]) / 3)}% spichlerza) – najpierw zwieź/wymień`
@@ -1467,11 +1472,11 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 			const by = {}; st.forEach(v => { by[v.id] = v; });
 			sends.forEach(s => { s.res.forEach((n, i) => { by[s.from].res[i] -= n; by[s.to].res[i] += n; }); by[s.from].tradersFree -= s.merchants; });
 			const capAll = st.reduce((a, v) => a + v.cap, 0);
-			const gm = RES.map((_, i) => st.reduce((a, v) => a + v.res[i] + v.inc[i], 0) / Math.max(1, capAll));
-			const donors = st.filter(v => v.tradersFree > S.tradersSafeguard).map(v => { v.keepOwn = RES.map((_, i) => i === skipR ? v.res[i] : Math.ceil(gm[i] * v.cap)); return v; });
+			const gm = distTarget(RES.map((_, i) => st.reduce((a, v) => a + v.res[i] + v.inc[i], 0) / Math.max(1, capAll)), skipR);
+			const donors = st.filter(v => v.tradersFree > S.tradersSafeguard).map(v => { v.keepOwn = RES.map((_, i) => Math.ceil(gm[i] * v.cap)); return v; });
 			const items = st.map(v => ({
 				target: v.id, name: v.name, v,
-				need: RES.map((_, i) => i === skipR ? 0 : floor1000(Math.max(0, gm[i] * v.cap - v.res[i] - v.inc[i]))),
+				need: RES.map((_, i) => floor1000(Math.max(0, gm[i] * v.cap - v.res[i] - v.inc[i]))),
 				headroom: RES.map((_, i) => Math.max(0, v.cap - v.res[i] - v.inc[i])), what: '🗺️ między rejonami'
 			})).filter(it => it.need.some(n => n >= S.carry)).sort((a, b) => sum3(b.need) - sum3(a.need));
 			if (items.length && donors.length) {
@@ -1487,7 +1492,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dysponen
 	function distHtml(rep, when) {
 		const merchants = rep.sends.reduce((a, s) => a + s.merchants, 0);
 		const rows = rep.regions.slice().sort((a, b) => sum3(b.wanted) - sum3(a.wanted)).map(x => `<tr class="row_b"><td>${vlink(x.hub)}</td><td>${x.members.length}</td><td>${sum3(x.gave) ? resList(x.gave) : '<span class="grey">–</span>'}</td><td>${sum3(x.wanted) - sum3(x.gave) >= S.carry ? '<span style="color:#a00">' + resList(x.wanted.map((n, i) => Math.max(0, n - x.gave[i]))) + '</span>' : '<span style="color:#060">ok</span>'}</td><td>${x.why || ''}</td></tr>`).join('');
-		return `<p>Wyrównuję w rejonach: wioski z nadwyżką (centrale po wymianie, ale też każda przepełniona) oddają najbliższym, które mają mniej niż <b>średnia rejonu</b> (osobno dla każdego surowca)${rep.skipR >= 0 ? ', <b>bez ' + RES_PL[rep.skipR].toLowerCase() + '</b> (to zwoziłeś)' : ''}. Wysyłek: <b id="${NS}_left">${rep.sends.length}</b>${rep.cross ? ' <span class="grey">(w tym ' + rep.cross + ' między rejonami)</span>' : ''} · kupców: <b>${Math.round(merchants)}</b> · razem ${sum3(rep.sends.reduce((a, s) => a.concat([s]), []).reduce((a, s) => s.res.map((n, i) => n + a[i]), [0, 0, 0])).toLocaleString('pl-PL')}
+		return `<p>Wyrównuję w rejonach: wioski z nadwyżką (centrale po wymianie, ale też każda przepełniona) oddają najbliższym, które mają mniej niż <b>średnia rejonu</b> (osobno dla każdego surowca)${rep.skipR >= 0 ? ', przy czym <b>' + RES_PL[rep.skipR].toLowerCase() + '</b> (to zwoziłeś) tylko do poziomu pozostałych surowców' : ''}. Wysyłek: <b id="${NS}_left">${rep.sends.length}</b>${rep.cross ? ' <span class="grey">(w tym ' + rep.cross + ' między rejonami)</span>' : ''} · kupców: <b>${Math.round(merchants)}</b> · razem ${sum3(rep.sends.reduce((a, s) => a.concat([s]), []).reduce((a, s) => s.res.map((n, i) => n + a[i]), [0, 0, 0])).toLocaleString('pl-PL')}
 			${rep.hasSaved ? '' : '<br><span class="grey">Brak zapisanego podziału z zwózki – podzieliłem wioski na nowo.</span>'}</p>
 			${rep.sends.length ? `<p><a href="#" class="btn" id="${NS}_all">▶ Wyślij wszystko</a></p>
 				<table class="vis" id="${NS}_table" style="width:100%"><tbody><tr><th>Skąd → dokąd</th><th>Pól</th><th>Czas</th><th>Kupców</th><th>Surowce</th><th></th></tr>${rep.sends.map(rowHtml).join('')}</tbody></table>`
