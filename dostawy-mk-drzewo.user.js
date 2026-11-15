@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dostawy MK - drzewo do celu (bicie monet)
 // @namespace    dostawy-mk-drzewo
-// @version      2.3.1
+// @version      2.3.2
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @description  Menedżer konta > Dostawy: (1) zaopatrzenie nowych wiosek pod budowę i rekrutację, (2) liczy najszybsze trasy (każda wioska jeden cel, przerzuty przez wioski z kupcami) do wioski bijącej monety i po kliknięciu podmienia harmonogramy dostaw.
@@ -11,7 +11,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.3.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.3.2',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI */
@@ -911,10 +911,11 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 					} else {
 						doc = await postForm(f.action, newRouteBody(f, st.d));
 					}
-					const fresh = readRoutes(doc);
-					if (fresh.length || doc.querySelector('form[name=market]')) { routes = fresh; }
+					routes = await fullRoutes(doc);
 					ok = verify(st, routes);
-					if (!ok) { err = $(doc).find('.error_box').text().replace(/\s+/g, ' ').trim(); await sleep(1500); }
+					// nie widać? zajrzyj jeszcze raz w pełną listę, zanim wyślesz drugi raz (inaczej duplikat)
+					if (!ok) { await sleep(1500); routes = await fetchRoutes(); ok = verify(st, routes); }
+					if (!ok) { err = $(doc).find('.error_box').text().replace(/\s+/g, ' ').trim(); }
 				} catch (e) { err = e.message || String(e); await sleep(1500); }
 			}
 			if (!ok) {
@@ -961,9 +962,16 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		const u = new URL(location.href);
 		['action', 'h', 'mode'].forEach(k => u.searchParams.delete(k));
 		u.searchParams.set('screen', 'am_market');
+		u.searchParams.set('group', '0');		// cała lista - inne skrypty potrafią w tle przełączyć grupę i lista się filtruje
 		u.searchParams.set('_', Date.now());
 		const html = await $.ajax({ url: u.pathname + u.search, cache: false });
 		return readRoutes(new DOMParser().parseFromString(html, 'text/html'));
+	}
+	// lista z odpowiedzi gry tylko wtedy, gdy nie jest filtrowana grupą; inaczej świeża pełna lista
+	const groupOfDoc = doc => String((doc.querySelector('strong.group-menu-item[data-group-id]') || { getAttribute: () => '0' }).getAttribute('data-group-id') || '0');
+	async function fullRoutes(doc) {
+		if (doc && groupOfDoc(doc) === '0' && (readRoutes(doc).length || doc.querySelector('form[name=market]'))) { return readRoutes(doc); }
+		return fetchRoutes();
 	}
 
 	// koniec kolejki: gra wpisuje w formularz ostatnią trasę - wyczyść go, żeby kolejny Enter nie zrobił duplikatu
