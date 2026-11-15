@@ -1,16 +1,16 @@
 // ==UserScript==
 // @name         Plemiona – Plemienny Poker podpowiedź
 // @namespace    plemiona.poker.helper
-// @version      1.5
+// @version      1.6
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-poker-podpowiedz.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-poker-podpowiedz.user.js
-// @description  Panel z podpowiedzią w evencie Plemienny Poker: atak/wymiana kart oraz wybór flag w sklepie. Nie klika za gracza.
+// @description  Panel z podpowiedzią w evencie Plemienny Poker: atak/wymiana kart, wybór flag w sklepie, pamięć flag i eksport wiedzy jednym przyciskiem. Nie klika za gracza.
 // @match        https://*.plemiona.pl/game.php*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['plemiona-poker-podpowiedz']={v:'1.5',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['plemiona-poker-podpowiedz']={v:'1.6',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 if(!/[?&]screen=event_siege_poker/.test(location.search)){ /* inny ekran – nic nie rób */ }
@@ -78,7 +78,12 @@ function styleOf(info){
   if(/wszystkie\s*(karty|niepunktuj)|5\s*kart|pi[eę][cć]\s*kart|pe[lł]ny\s*atak/.test(info.text))return 'full';
   return null;
 }
-function ownedFlags(){return (SH.flags&&SH.flags.length?SH.flags:(S.flags||[]));}
+function ownedFlags(){
+  /* w bitwie ważniejsze są flagi z danych bitwy, w sklepie – z danych sklepu */
+  var inShop=currentView()==='shop';
+  var a=inShop?SH.flags:S.flags,b=inShop?S.flags:SH.flags;
+  return (a&&a.length)?a:((b&&b.length)?b:[]);
+}
 
 function scoreOffer(o,owned,maxFlags){
   var info=flagInfo(o),why=[],sc=0;
@@ -358,6 +363,8 @@ function ingest(b,s,src){
   if(b)mergeB(b);
   if(s)mergeS(s);
   if(b||s)source=src;
+  if(s)shTs=Date.now();
+  learn();
   var v=currentView();
   var sig=JSON.stringify([S.cards_hand,S.available_attacks,S.available_free_discards,S.castle&&S.castle.defense_power,S.castle&&S.castle.number,S.flags,SH.flag_shop_offers,SH.flags,SH.count_available_takes,SH.available_free_flag_rerolls,v]);
   if(sig===lastSig)return;
@@ -388,6 +395,186 @@ function onResp(resp,src){
   }catch(e){}
 }
 
+/* ---------- PAMIĘĆ: flagi, zamki, wybory w sklepie, ataki ---------- */
+var SCRIPT_V='1.6';
+var DBKEY='sp_helper_db_v1';
+var DB=loadDB();
+var dbDirty=false,lastLearnSig=null,pending=null,shTs=0,copyMsg='',copyMsgAt=0,fallbackText='';
+function emptyDB(){return {v:1,flags:{},offers:[],castles:{},attacks:[],lastOwned:null,created:Date.now()};}
+function loadDB(){
+  try{
+    var r=localStorage.getItem(DBKEY);
+    if(r){var d=JSON.parse(r);if(d&&d.v===1&&d.flags){d.offers=d.offers||[];d.castles=d.castles||{};d.attacks=d.attacks||[];return d;}}
+  }catch(e){}
+  return emptyDB();
+}
+function saveDB(){
+  if(!dbDirty)return;
+  try{DB.updated=Date.now();localStorage.setItem(DBKEY,JSON.stringify(DB));dbDirty=false;}catch(e){}
+}
+function same(a,b){return JSON.stringify(a)===JSON.stringify(b);}
+
+var FSTATIC=['key','name','rarity','rarity_text','category','when','sub_types','scaling','increase_per_level','desc','flag_icon'];
+function noteFlag(f){
+  if(!f||f.id==null)return;
+  var e=DB.flags[f.id];
+  if(!e){e=DB.flags[f.id]={id:f.id,first_seen:Date.now(),levels:{}};dbDirty=true;}
+  FSTATIC.forEach(function(k){if(f[k]!==undefined&&!same(e[k],f[k])){e[k]=f[k];dbDirty=true;}});
+  var lv=String(f.level||1),snap={value:f.value,desc_stats:f.desc_stats};
+  if(!same(e.levels[lv],snap)){e.levels[lv]=snap;dbDirty=true;}
+  if(f.upgrade&&!same(e.upgrade,f.upgrade)){e.upgrade=f.upgrade;dbDirty=true;}
+}
+function addU(arr,v){if(v===null||v===undefined||v===''||arr.indexOf(v)>-1)return;arr.push(v);dbDirty=true;}
+function noteCastle(c){
+  if(!c||c.number==null)return;
+  var e=DB.castles[c.number];
+  if(!e){e=DB.castles[c.number]={number:c.number,defense:[],difficulty:[],abilities:[],counter_attacks:[]};dbDirty=true;}
+  var dp=c.defense_power_base!=null?c.defense_power_base:c.defense_power;
+  if(Number(dp)>0)addU(e.defense,Number(dp));
+  addU(e.difficulty,c.difficulty_level);
+  if(c.ability_desc)addU(e.abilities,c.ability_desc);
+  if(c.counter_attacks!=null)addU(e.counter_attacks,c.counter_attacks);
+  if(c.is_joker&&!e.joker){e.joker=true;dbDirty=true;}
+}
+function curRun(){return S.run!=null?S.run:null;}
+function recordOffers(){
+  var of=SH.flag_shop_offers,nc=SH.next_castle;
+  if(!of||!of.length||!nc)return;
+  var ids=of.map(function(o){return o.id;}),run=curRun();
+  for(var i=DB.offers.length-1;i>=0&&i>DB.offers.length-8;i--){
+    var o=DB.offers[i];
+    if(o.castle===nc.number&&o.run===run&&same(o.ids,ids))return;
+  }
+  DB.offers.push({run:run,castle:nc.number,ids:ids,levels:of.map(function(o){return o.level||1;}),ts:Date.now(),taken:null});
+  if(DB.offers.length>500)DB.offers.shift();
+  dbDirty=true;
+}
+function detectTaken(){
+  var cur={};
+  ownedFlags().forEach(function(f){cur[f.id]=Number(f.level)||1;});
+  var prev=DB.lastOwned;
+  if(prev){
+    var taken=[];
+    Object.keys(cur).forEach(function(id){if(prev[id]===undefined||cur[id]>prev[id])taken.push(Number(id));});
+    if(taken.length){
+      for(var i=DB.offers.length-1;i>=0;i--){
+        var o=DB.offers[i];
+        if(o.taken===null&&taken.some(function(t){return o.ids.indexOf(t)>-1;})){
+          o.taken=taken.filter(function(t){return o.ids.indexOf(t)>-1;});dbDirty=true;break;
+        }
+      }
+    }
+  }
+  if(!same(prev,cur)){DB.lastOwned=cur;dbDirty=true;}
+}
+function finishAttack(){
+  if(!pending)return;
+  var p=pending,c=S.castle||{},done=null;
+  if(Date.now()-p.ts>90000){pending=null;return;}
+  if(SH.next_castle&&Number(SH.next_castle.number)>p.castle&&shTs>=p.ts)done={result:'won',dmg:p.def,def_after:0};
+  else if(c.number!=null&&Number(c.number)>p.castle)done={result:'won',dmg:p.def,def_after:0};
+  else if(c.number!=null&&(Number(c.number)<p.castle||(S.run!=null&&p.run!=null&&S.run!==p.run)))done={result:'lost',dmg:null,def_after:null};
+  else if(c.number!=null&&S.available_attacks!=null&&Number(S.available_attacks)<p.att){
+    var da=Number(c.defense_power)||0;
+    done={result:'hit',dmg:p.def-da,def_after:da};
+  }
+  if(!done)return;
+  for(var k in done)p[k]=done[k];
+  DB.attacks.push(p);
+  if(DB.attacks.length>300)DB.attacks.shift();
+  pending=null;dbDirty=true;
+}
+function learn(){
+  try{
+    var owned=ownedFlags(),offers=SH.flag_shop_offers||[];
+    var sig=JSON.stringify([owned.map(function(f){return [f.id,f.level];}),offers.map(function(f){return [f.id,f.level];}),S.castle&&[S.castle.number,S.castle.defense_power],SH.next_castle&&SH.next_castle.number,S.run,S.available_attacks,shTs]);
+    if(sig===lastLearnSig)return;
+    lastLearnSig=sig;
+    owned.forEach(noteFlag);
+    offers.forEach(noteFlag);
+    noteCastle(S.castle);noteCastle(SH.castle);noteCastle(SH.next_castle);
+    recordOffers();detectTaken();finishAttack();
+    saveDB();
+  }catch(e){console.log('[SPHelper] learn',e);}
+}
+function hookClicks(){
+  if(!document.addEventListener)return;
+  document.addEventListener('click',function(e){
+    try{
+      var t=e.target,b=(t&&t.closest)?t.closest('#btn_attack'):null;
+      if(!b||!S.castle)return;
+      pending={castle:Number(S.castle.number),run:curRun(),def:Number(S.castle.defense_power)||0,att:S.available_attacks,dis:S.available_free_discards,
+        forecast:num(tx('attack_forecast_value')),hand:String(tx('attack_forecast_poker_hand')).trim(),
+        flags:ownedFlags().map(function(f){return [f.id,f.level||1];}),ts:Date.now()};
+    }catch(x){}
+  },true);
+}
+
+/* ---------- EKSPORT WIEDZY (jeden przycisk → schowek) ---------- */
+function buildExport(){
+  var cnt={};
+  function c(id){return cnt[id]||(cnt[id]={offered:0,taken:0});}
+  DB.offers.forEach(function(o){
+    o.ids.forEach(function(id){c(id).offered++;});
+    (o.taken||[]).forEach(function(id){c(id).taken++;});
+  });
+  var flags=Object.keys(DB.flags).map(function(k){
+    var f=DB.flags[k],r={};
+    for(var p in f)r[p]=f[p];
+    r.offered=c(f.id).offered;r.taken=c(f.id).taken;
+    return r;
+  }).sort(function(a,b){return a.id-b.id;});
+  var castles=Object.keys(DB.castles).map(function(k){return DB.castles[k];}).sort(function(a,b){return a.number-b.number;});
+  return {
+    format:'plemiona-poker-wiedza',version:1,script:SCRIPT_V,world:(typeof location!=='undefined'&&location.hostname)||'',
+    exported:new Date().toISOString(),
+    counts:{flags:flags.length,castles:castles.length,offers:DB.offers.length,attacks:DB.attacks.length},
+    rules:{base_hand_values:BASE,card_values:CV,
+      note:'Założenie skryptu (niezweryfikowane): siła = baza układu × (1+Weterani w układzie) + punkty kart w układzie. Flagi liczone tylko częściowo.'},
+    flags:flags,castles:castles,offers:DB.offers,attacks:DB.attacks
+  };
+}
+function legacyCopy(t){
+  return new Promise(function(res,rej){
+    try{
+      var ta=document.createElement('textarea');
+      ta.value=t;ta.style.cssText='position:fixed;left:-9999px;top:0';
+      document.body.appendChild(ta);ta.select();
+      var ok=document.execCommand('copy');
+      document.body.removeChild(ta);
+      ok?res():rej();
+    }catch(e){rej(e);}
+  });
+}
+function copyText(t){
+  if(typeof navigator!=='undefined'&&navigator.clipboard&&navigator.clipboard.writeText){
+    return navigator.clipboard.writeText(t).catch(function(){return legacyCopy(t);});
+  }
+  return legacyCopy(t);
+}
+function updateMsg(){
+  var m=document.getElementById('sp_copy_msg');
+  if(m)m.textContent=copyMsg;
+  if(fallbackText){
+    var box=document.getElementById('sp_fallback');
+    if(!box){
+      box=document.createElement('textarea');box.id='sp_fallback';
+      box.style.cssText='width:100%;height:70px;margin-top:4px;background:#111;color:#ddd;border:1px solid #555;font-size:10px';
+      var bar=document.getElementById('sp_toolbar');
+      if(bar)bar.appendChild(box);
+    }
+    box.value=fallbackText;box.focus();box.select();
+  }
+}
+function onCopy(){
+  var txt=JSON.stringify(buildExport());
+  copyText(txt).then(function(){
+    fallbackText='';copyMsg='Skopiowano '+Math.round(txt.length/1024)+' kB – wklej w czacie z Claude';copyMsgAt=Date.now();updateMsg();
+  },function(){
+    fallbackText=txt;copyMsg='Schowek zablokowany – tekst zaznaczony poniżej, skopiuj Ctrl+C';copyMsgAt=Date.now();updateMsg();
+  });
+}
+
 /* ---------- PANEL ---------- */
 function ensurePanel(){
   if(panel)return panel;
@@ -398,11 +585,15 @@ function ensurePanel(){
   return panel;
 }
 function head(t){
-  return '<div style="display:flex;justify-content:space-between;font-weight:bold;color:#c9a227;margin-bottom:4px"><span>♠ '+(t||'Poker – podpowiedź')+'</span><a href="#" id="sp_close" style="color:#c9a227">✕</a></div>';
+  var msg=(copyMsg&&Date.now()-copyMsgAt<8000)?esc(copyMsg):'';
+  return '<div style="display:flex;justify-content:space-between;font-weight:bold;color:#c9a227;margin-bottom:4px"><span>♠ '+(t||'Poker – podpowiedź')+'</span><a href="#" id="sp_close" style="color:#c9a227">✕</a></div>'
+    +'<div id="sp_toolbar" style="margin-bottom:6px"><a href="#" id="sp_copy" style="display:inline-block;padding:2px 8px;border:1px solid #c9a227;border-radius:3px;color:#c9a227;text-decoration:none">📋 Kopiuj wiedzę</a> <span style="color:#999;font-size:11px">'+Object.keys(DB.flags).length+' flag, '+Object.keys(DB.castles).length+' zamków, '+DB.attacks.length+' ataków</span><div id="sp_copy_msg" style="color:#7fd37f;font-size:11px">'+msg+'</div></div>';
 }
 function bind(){
   var x=document.getElementById('sp_close');
   if(x)x.onclick=function(e){e.preventDefault();window.__spHelper.toggle();};
+  var c=document.getElementById('sp_copy');
+  if(c)c.onclick=function(e){e.preventDefault();onCopy();};
 }
 var diagLogged=false;
 function renderDiag(sp,fs){
@@ -526,6 +717,7 @@ if(window.jQuery){
 
 ensurePanel().innerHTML=head()+'<div>Skrypt załadowany, szukam danych gry…</div>';
 bind();
+hookClicks();
 setInterval(poll,700);
 poll();
 })();
