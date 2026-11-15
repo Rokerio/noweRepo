@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dostawy MK - drzewo do celu (bicie monet)
 // @namespace    dostawy-mk-drzewo
-// @version      2.3.2
+// @version      2.4.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @description  Menedżer konta > Dostawy: (1) zaopatrzenie nowych wiosek pod budowę i rekrutację, (2) liczy najszybsze trasy (każda wioska jeden cel, przerzuty przez wioski z kupcami) do wioski bijącej monety i po kliknięciu podmienia harmonogramy dostaw.
@@ -11,7 +11,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.3.2',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.4.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI */
@@ -49,6 +49,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		devPopFill: 95,              // ...zapełniona co najmniej w tylu %
 		devPoints: 9000,             // ...i wioska ma co najmniej tyle punktów
 		protectMints: false,         // ochrona pilnuje też spichlerzy mennic (false = mennice pilnujesz sam, wymianą)
+		packageRoom: 30,             // pośrednik z co najmniej tylu % wolnego spichlerza (miejsce na pakiet) dostaje pełny dopływ
 		relayShare: 70               // pośrednik dostaje od swoich wiosek najwyżej tyle % tego, co sam zdąży oddać (reszta kupców na własny zapas)
 	};
 	// ===============================================================================
@@ -326,8 +327,11 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		const depth = p => { let x = p, d = 0; while (x && !x.isSink && d < 10) { const to = x.to; x = plan.find(q => q.v === to); d++; } return d; };
 		plan.filter(r => kids.has(r.v)).sort((a, b) => depth(a) - depth(b)).forEach(r => {
 			const ks = kids.get(r.v);
-			const out = rateOf(r) * share, inflow = ks.reduce((a, c) => a + rateOf(c), 0);
-			r.relayIn = inflow; r.relayOut = rateOf(r);
+			// pośrednik z miejscem na pakiet: pełny dopływ (nie traci kupców); pełniejszy: mniej, żeby oddał swój zapas
+			const roomy = Math.max(...r.v.res) <= (r.v.cap || 400000) * (1 - Math.max(0, Math.min(90, S.packageRoom)) / 100);
+			const sh = roomy ? 1 : share;
+			const out = rateOf(r) * sh, inflow = ks.reduce((a, c) => a + rateOf(c), 0);
+			r.relayIn = inflow; r.relayOut = rateOf(r); r.relayShare = sh;
 			if (inflow <= out) { return; }
 			const f = out / inflow;
 			ks.forEach(c => {
@@ -419,9 +423,14 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		});
 		const arr = Array.from({ length: N + 1 }, () => []);
 		const coins = sinks.map(() => 0);
+		const hasRoute = new Set(routes.filter(r => r.need !== 0).map(r => r.s));
+		const left = [];			// co godzinę: ile zostało w wioskach z trasami (bez mennic)
 		routes.forEach(r => { r.nextAt = 0; r.sent = [0, 0, 0]; r.trip = 2 * dist(r.s, r.t) * mpf; r.need = Math.ceil(r.pack[0] + r.pack[1] + r.pack[2] - 1e-9); });
 		for (let m = 0; m < N; m++) {
 			st.forEach(x => { x.busy = Math.max(0, x.busy - x.ret[m]); });
+			// obłożenie kupców co godzinę (wioski z trasami)
+			hasRoute.forEach(v => { const x = st.get(v), h = Math.floor(m / 60); if (!x.use) { x.use = []; } x.use[h] = (x.use[h] || 0) + x.busy / Math.max(1, v.merchants || 1) / 60; });
+			if (m % 60 === 0) { let t = 0; hasRoute.forEach(v => { if (sinks.indexOf(v) < 0) { const x = st.get(v); t += x.r[0] + x.r[1] + x.r[2]; } }); left.push(t); }
 			arr[m].forEach(a => {
 				const x = st.get(a.t);
 				for (let k = 0; k < 3; k++) {
@@ -450,7 +459,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 					if ((r.s.merchants || 0) - x.busy < need) { continue; }
 					if (q.some((p, k) => x.r[k] < p * 1000)) { continue; }
 					for (let k = 0; k < 3; k++) { x.r[k] -= q[k] * 1000; r.sent[k] += q[k] * 1000; }
-					x.busy += need;
+					x.busy += need; x.lastSend = m;
 					const back = Math.min(N, m + Math.max(1, Math.round(r.trip)));
 					x.ret[back] += need;
 					const at = m + Math.max(1, Math.round(r.trip / 2));
@@ -458,7 +467,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				}
 			}
 		}
-		return { st: st, coins: coins };
+		return { st: st, coins: coins, left: left };
 	}
 
 	// zmniejsza paczki tras, które przelewają spichlerz odbiorcy (mennicy albo pośrednika): po 1 tys. danego surowca,
@@ -583,7 +592,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				<tr><td>Menedżer realnie wysyła co</td><td><input id="${NS}_re" size="3" value="${S.realEvery || ''}" placeholder="auto"> min <span class="grey">puste = skrypt oszacuje z zajętych kupców (zwykle ~2 min, mimo ustawionego 00:01)</span></td></tr>
 				<tr><td>Pomiń wioski</td><td><input id="${NS}_x" size="24" value="${esc(S.exclude)}"> <span class="grey">współrzędne po przecinku</span> · dalej niż <input id="${NS}_md" size="2" value="${S.maxDist}"> pól od celu pomijaj</td></tr>
 				<tr><td>Przystanki / paczka</td><td>najwyżej <input id="${NS}_hops" size="2" value="${S.maxHops}"> przystanki, paczka min <input id="${NS}_minp" size="2" value="${S.minPerRes}"> max <input id="${NS}_max" size="3" value="${S.maxPerRes}"> tys. jednego surowca na turę</td></tr>
-				<tr><td>Pośrednik dostaje najwyżej</td><td><input id="${NS}_rs" size="3" value="${S.relayShare}">% tego, co sam zdąży oddać <span class="grey">(reszta jego kupców na własny zapas - przy pakietach pośrednik się nie przeleje; 100 = bez ograniczenia)</span></td></tr>
+				<tr><td>Pośrednik dostaje najwyżej</td><td><input id="${NS}_rs" size="3" value="${S.relayShare}">% tego, co sam zdąży oddać, gdy ma mniej niż <input id="${NS}_pr" size="2" value="${S.packageRoom}">% wolnego spichlerza (miejsce na pakiet); z miejscem - pełny dopływ <span class="grey">(reszta jego kupców na własny zapas - przy pakietach pośrednik się nie przeleje; 100 = bez ograniczenia)</span></td></tr>
 				<tr><td>Ochrona przed przelaniem</td><td><label><input type="checkbox" id="${NS}_prot" ${S.protect ? 'checked' : ''}> licz na</label> <input id="${NS}_ph" size="2" value="${S.protectHours}"> h naprzód <span class="grey">(np. na noc) - zmniejsza paczki, które przelałyby spichlerz pośrednika</span> <label style="margin-left:8px"><input type="checkbox" id="${NS}_pmint" ${S.protectMints ? 'checked' : ''}> także mennic</label></td></tr>
 				<tr><td>Wolne zsyłanie z produkcji</td><td><label><input type="checkbox" id="${NS}_pm" ${S.prodMode ? 'checked' : ''}> co godzinę prosto do najbliższej mennicy</label> <input id="${NS}_ps" size="3" value="${S.prodShare}">% produkcji wioski, rozwinięta <input id="${NS}_ds" size="3" value="${S.devShare}">%<br><span class="grey">rozwinięta = zagroda ≥ <input id="${NS}_dpm" size="5" value="${S.devPopMax}"> miejsc, zajęta ≥ <input id="${NS}_dpf" size="2" value="${S.devPopFill}">%, wioska ≥ <input id="${NS}_dp" size="5" value="${S.devPoints}"> pkt</span></td></tr>
 				<tr><td>Tryb spokojny</td><td><label><input type="checkbox" id="${NS}_calm" ${S.calm ? 'checked' : ''}> zamiast pełnych obrotów: surowce na</label> <input id="${NS}_cpd" size="4" value="${S.coinsPerDay}"> monet na dobę <span class="grey">(1 szlachcic dziennie = tyle monet, ile wynosi następny limit szlachciców, np. 127)</span></td></tr>
@@ -595,6 +604,14 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		</div>`);
 		const host = $('h3').filter(function () { return /Utwórz harmonogram dostaw/.test($(this).text()); }).first();
 		if (host.length) { host.before(box); } else { $('#content_value').prepend(box); }
+		// przypomnienie: symulacja wskazała godzinę, od której wioski przy mennicy stoją
+		try {
+			const due = +localStorage.getItem(NS + '_recalc_' + game_data.world) || 0;
+			if (due && Date.now() >= due) {
+				const d = new Date(due);
+				$('#' + NS + '_out').before(`<div class="info_box" style="margin:6px 0;padding:6px"><b>Pora przeliczyć trasy</b> (od ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}) - wioski przy mennicy skończyły swój zapas i ich kupcy stoją. Kliknij „Policz trasy”, potem „⚡ Zrób wszystko sam”.</div>`);
+			}
+		} catch (e) { /* ignore */ }
 		$('#' + NS + '_calc').on('click', () => calc().catch(e => { console.error(e); msg.err('Dostawy: ' + (e.message || e)); }));
 		$('#' + NS + '_tg').on('change', function () { S.targetGroup = this.value; saveCfg(); targetList().catch(er => msg.err('Dostawy: ' + (er.message || er))); });
 		$('#' + NS + '_fg').on('change', function () { S.fromGroup = this.value; saveCfg(); if (state) { state.excluded = null; } });
@@ -643,6 +660,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		S.calm = $('#' + NS + '_calm').prop('checked');
 		S.prodMode = $('#' + NS + '_pm').prop('checked');
 		S.relayShare = Math.max(10, Math.min(100, num($('#' + NS + '_rs').val()) || 70));
+		S.packageRoom = Math.max(0, Math.min(90, num($('#' + NS + '_pr').val())));
 		S.prodShare = Math.max(1, num($('#' + NS + '_ps').val()) || 50);
 		S.devShare = Math.max(1, num($('#' + NS + '_ds').val()) || 100);
 		S.devPopMax = num($('#' + NS + '_dpm').val()) || 24000;
@@ -734,7 +752,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 			const p = plan.find(x => x.v === v);
 			const ex = !!excluded[v.coords];
 			html += `<tr class="row_b"><td><input type="checkbox" class="${NS}_inc" data-c="${v.coords}" ${ex ? '' : 'checked'}></td><td>${esc(v.name)} (${v.coords})</td>` +
-				(p ? `<td>${p.isSink ? '<b>' : ''}${esc(p.to.name)}${p.isSink ? ' ★</b>' : ''}</td><td>${fmt(p.d)}</td><td>${Math.round(2 * p.d * S.minutesPerField)} min</td><td>${v.merchants}</td><td>${p.ph ? fmt(p.F) + ' tys./h (' + Math.round(p.share * 100) + '%' + (p.dev ? ' ★' : '') + ')' : p.F + ' tys.'}</td><td>${p.pack.map(x => fmt(x)).join(' / ')}${p.throttled ? `<br><span class="grey" style="font-size:10px">↓ mniej - ${esc(p.throttled)} nie nadąża oddawać</span>` : ''}${p.relayIn ? `<br><span class="grey" style="font-size:10px">pośrednik: dostaje ${fmt(Math.min(p.relayIn, p.relayOut * S.relayShare / 100))}, oddaje ${fmt(p.relayOut)} tys./min</span>` : ''}</td><td>${fmtTime(p.every || intervalMinutes())}</td>`
+				(p ? `<td>${p.isSink ? '<b>' : ''}${esc(p.to.name)}${p.isSink ? ' ★</b>' : ''}</td><td>${fmt(p.d)}</td><td>${Math.round(2 * p.d * S.minutesPerField)} min</td><td>${v.merchants}</td><td>${p.ph ? fmt(p.F) + ' tys./h (' + Math.round(p.share * 100) + '%' + (p.dev ? ' ★' : '') + ')' : p.F + ' tys.'}</td><td>${p.pack.map(x => fmt(x)).join(' / ')}${p.throttled ? `<br><span class="grey" style="font-size:10px">↓ mniej - ${esc(p.throttled)} nie nadąża oddawać</span>` : ''}${p.relayIn ? `<br><span class="grey" style="font-size:10px">pośrednik: dostaje ${fmt(Math.min(p.relayIn, p.relayOut * p.relayShare))}, oddaje ${fmt(p.relayOut)} tys./min${p.relayShare < 1 ? ' (zapchany - najpierw oddaje swój zapas)' : ''}</span>` : ''}</td><td>${fmtTime(p.every || intervalMinutes())}</td>`
 					: `<td colspan="7" class="grey">${why(v) || 'nic do wysłania'}</td>`) + '</tr>';
 		});
 		html += '</table>';
@@ -746,6 +764,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				(S.splitRes ? '' : ' <span class="grey">Przy wspólnej dostawie D+G+Ż wioska bez jednego surowca nie wysyła nic - zaznacz „osobna dostawa na każdy surowiec”, żeby reszta jechała dalej (np. do wymiany w mennicy).</span>') + '</p>';
 		}
 		if (prot) { html += simReport(prot, sinks); }
+		try { html += timelineReport(plan, simVillages, sinks); } catch (e) { console.error('Dostawy: przebieg', e); }
 		try { html += exchangeReport(plan, sinks, prot && (prot.after || prot.before)); } catch (e) { console.error('Dostawy: wymiana', e); }
 
 		html += `<p style="margin-top:8px"><b>Istniejące harmonogramy do usunięcia</b> <span class="grey">(domyślnie: trasy zwózki - co ≤ ${S.replaceInterval} min albo założone tym skryptem)</span></p><table class="vis" style="width:100%"><tr><th>Usuń</th><th>Start</th><th>Cel</th><th>Paczka</th><th>Co</th></tr>`;
@@ -803,6 +822,40 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 	function planRes(p) {
 		if (!S.splitRes) { return p.pack.some(x => x > 0) ? [p.pack.map(x => Math.round(x * 1000))] : []; }
 		return [0, 1, 2].filter(k => p.pack[k] > 0).map(k => { const r = [0, 0, 0]; r[k] = Math.round(p.pack[k] * 1000); return r; });
+	}
+
+	// przebieg na dobę: kiedy wioski przy mennicy będą puste i kiedy warto przeliczyć trasy (puste staną się pośrednikami)
+	function timelineReport(plan, villages, sinks) {
+		const H = 24, N = H * 60, sim = simulate(plan.map(p => ({ s: p.v, t: p.to, pack: p.pack, every: p.every })), villages, sinks, N);
+		const clock = m => { const d = new Date(Date.now() + m * 60000); return d.getHours() + ':' + String(d.getMinutes()).padStart(2, '0'); };
+		const L = sim.left, L0 = L[0] || 1, at = h => L[Math.min(L.length - 1, h)] || 0;
+		// kiedy wioska przestaje wysyłać (brak pełnej paczki) - od tej chwili jej kupcy stoją
+		// pierwsza godzina, w której kupcy są zajęci w mniej niż połowie (wcześniej pracowali)
+		const stopOf = v => { const u = sim.st.get(v).use || []; let was = false; for (let i = 0; i < u.length; i++) { if (u[i] >= 0.6) { was = true; } else if (was && u[i] < 0.5) { return i * 60; } } return null; };
+		// koniec: ostatnia godzina, w której ubyło > 1% zapasu
+		let endH = 0; for (let i = 1; i < L.length; i++) { if (L[i - 1] - L[i] > 0.01 * L0) { endH = i; } }
+		const rest = at(L.length - 1);
+		const near = plan.filter(p => p.isSink && p.v.merchants >= 100 && p.d <= 4.5)
+			.map(p => ({ p: p, at: stopOf(p.v) })).sort((a, b) => (a.at === null ? 1e9 : a.at) - (b.at === null ? 1e9 : b.at));
+		const stopped = near.filter(e => e.at !== null);
+		let when = null;
+		if (stopped.length >= 3) {
+			const t = stopped[2].at, still = (at(Math.floor(t / 60)) - rest) / L0;
+			if (still > 0.15) { when = t; }
+		}
+		try { const RK = NS + '_recalc_' + game_data.world; if (when !== null) { localStorage.setItem(RK, String(Date.now() + when * 60000)); } else { localStorage.removeItem(RK); } } catch (e) { /* ignore */ }
+		const pct = h => Math.round(100 * at(h) / L0) + '%';
+		let h = `<div class="vis" style="margin-top:8px;padding:6px;font-size:12px"><b>Przebieg na ${H} h</b> <span class="grey">(te same trasy, bez pakietów, mennica bije na bieżąco)</span><br>`;
+		h += `Zostaje w wioskach: teraz ${Math.round(L0 / 1000)}k, po 3 h ${pct(3)}, po 6 h ${pct(6)}, po 12 h ${pct(12)}.<br>`;
+		h += `Trasy praktycznie kończą ok. <b>${clock(endH * 60)}</b>` + (rest > 0.05 * L0
+			? `; zostaje ${Math.round(100 * rest / L0)}% - to nadmiar jednego surowca (paczka D+G+Ż nie ruszy bez kompletu)${S.splitRes ? '' : ' - zabierze go „osobna dostawa na każdy surowiec”'}.<br>` : '.<br>');
+		if (near.length) {
+			h += 'Kupcy wiosek przy mennicy: ' + near.slice(0, 8).map(e => `${esc(e.p.v.name)} ${e.at === null ? 'pracuje całą dobę' : 'stoi od ' + clock(e.at)}`).join(', ') + '.<br>';
+		}
+		h += when !== null
+			? `<b>Przelicz trasy ok. ${clock(when)}</b> - wtedy wioski przy mennicy są już puste, a w dalszych zostaje jeszcze ${Math.round(100 * (at(Math.floor(when / 60)) - rest) / L0)}%; po przeliczeniu staną się pośrednikami (inaczej ich kupcy stoją).`
+			: '<span style="color:#070">Nie trzeba przeliczać co godzinę - te trasy same rozwiozą zapas do końca (przelicz dopiero po dorzuceniu pakietów albo gdy skończą).</span>';
+		return h + '</div>';
 	}
 
 	function simReport(prot, sinks) {
