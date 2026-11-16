@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.24
+// @version      3.25
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.24',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.25',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -37,6 +37,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
   st.mode = st.mode || 'auto';             // auto / normal / cofka
   st.secBias = num(st.secBias, 1);         // s: stała poprawka powrotu cofki (wojsko wraca o tyle s później niż S+2k); uczy się z wyniku
   st.speedK = num(st.speedK, 1);           // skala marszu (uczy się z ekranu potwierdzenia)
+  if (!st.speedKV2) { st.speedK = 1; st.speedKV2 = 1; } // jednorazowo: wyzeruj skalę – mogła się rozjechać od wysyłek innymi jednostkami niż w planie
   const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* ignore */ } };
 
   // ---------- czas serwera ----------
@@ -49,7 +50,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
     if (OFF !== null) return OFF;
     const el = $('serverTime');
     const m = el && el.textContent.match(/(\d+):(\d+):(\d+)/);
-    const disp = m ? (+m[1] * 3600 + +m[2] * 60 + +m[3]) : 0;
+    if (!m) return (window.server_utc_diff || 0) * 1000; // zegar strony jeszcze nie gotowy – nie zapamiętuj zgadywanki
+    const disp = +m[1] * 3600 + +m[2] * 60 + +m[3];
     const n = now();
     let best = 0, bd = 1e9;
     for (const c of [(window.server_utc_diff || 0) * 1000, 0]) {
@@ -338,8 +340,15 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
     // kalibracja: porównaj marsz z planu z rzeczywistym marszem z ekranu potwierdzenia
     let calNote = '';
     if (P && P.predDur && String(P.vid) === String(game_data.village.id)) {
+      // czas z ekranu wyznacza NAJWOLNIEJSZA wysyłana jednostka – kalibrujemy tylko wtedy, gdy to ta, którą planowaliśmy
+      let slowU = null, slowM = -1;
+      root.querySelectorAll('input[name]').forEach((i) => {
+        const nn = parseInt(i.value, 10) || 0;
+        const mp = i.name === 'knight' ? 10 : i.name === 'snob' ? 35 : BASE_MPF[i.name];
+        if (nn > 0 && mp !== undefined && mp > slowM) { slowM = mp; slowU = i.name; }
+      });
       const ratio = dur / P.predDur;
-      if (ratio > 0.2 && ratio < 5 && Math.abs(ratio - 1) > 0.002) {
+      if (slowU && slowU === P.unit && ratio > 0.8 && ratio < 1.25 && Math.abs(ratio - 1) > 0.002) {
         st.speedK = Math.round(st.speedK * ratio * 10000) / 10000;
         calNote = `Marsz: plan ${fmtLeft(P.predDur).replace(/\.\d+$/, '')}, rzeczywisty ${fmtLeft(dur).replace(/\.\d+$/, '')}. Skorygowałem skalę marszu (×${st.speedK}).`;
       }
