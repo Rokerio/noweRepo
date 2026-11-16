@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Skaner defa offem (auto)
 // @namespace    plemiona-roker
-// @version      2.2
+// @version      2.3
 // @description  Automatycznie czyta wysłane fejki, mierzy "Jednostki pokonane w ataku" przed/po wejściu każdego i szacuje obronę (z raportu: szczęście, morale, mur, bonusy, skład ataku)
 // @author       Roker
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/skaner-defa-offem.user.js
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-defa-offem']={v:'2.2',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-defa-offem']={v:'2.3',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 (function () {
   'use strict';
@@ -49,9 +49,11 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
 
   // ---------- wynik z rankingu ----------
   function parseScore(html) {
-    const m = html.match(/Mój dzisiejszy wynik:\s*<b>([^<]*)<\/b>/i);
+    // wynik bywa z kropką tysięcy w osobnym znaczniku: <b>5<span class="grey">.</span>467</b>
+    const m = html.match(/Mój dzisiejszy wynik:\s*<b>([\s\S]*?)<\/b>/i);
     if (!m) return null;
-    const n = parseInt(m[1].replace(/[^\d]/g, ''), 10);
+    const digits = m[1].replace(/<[^>]*>/g, '').replace(/&nbsp;/g, '').replace(/[^\d]/g, '');
+    const n = parseInt(digits, 10);
     return isNaN(n) ? null : n;
   }
   async function fetchScore() {
@@ -340,6 +342,15 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
     const nofull = cmds.filter((c) => !ATT_KEYS.some((k) => c.att[k])).length;
     status('Załadowano ' + cmds.length + ' fejków' + (nofull ? ' (' + nofull + ' bez odczytanego składu)' : '') + '. Nasłuchuję — nie zamykaj tej karty.');
 
+    // test odczytu: jeśli nie umiemy odczytać wyniku z Dzienne, nie ma sensu czekać na fejki
+    let probe = null;
+    try { probe = await fetchScore(); } catch (e) {}
+    if (probe == null) {
+      status('<b style="color:#c00">Nie mogę odczytać „Mój dzisiejszy wynik" z Ranking → Dzienne (Jednostki pokonane w ataku).</b> Sprawdź, czy ta strona działa, i napisz do Claude.');
+      running = false; return;
+    }
+    status('Załadowano ' + cmds.length + ' fejków. Wynik w Dzienne teraz: <b>' + probe + '</b>. Nasłuchuję — nie zamykaj tej karty.');
+
     let lastScore = null, lastTs = null;
     const done = new Set();
     const results = [];
@@ -354,6 +365,14 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
 
     while (running) {
       const t = nowWall();
+      // fejki, których okno pomiaru już minęło bez wyniku, zamykamy (żeby nie blokowały listy)
+      cmds.forEach((c) => {
+        if (!done.has(c.id) && t > c.arrival + POST_MS + 1000) {
+          done.add(c.id);
+          results.push({ coords: c.coord, comp: compText(c.att), K: '–', n: 1, amb: false, est: '<i>nie zmierzono (okno pomiaru minęło — skan włączony za późno albo karta była w tle)</i>' });
+          render();
+        }
+      });
       const pending = cmds.filter((c) => !done.has(c.id));
       if (!pending.length) break;
       const active = pending.some((c) => t >= c.arrival - PRE_MS && t <= c.arrival + POST_MS);
