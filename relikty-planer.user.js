@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relikty – planer rozmieszczenia
 // @namespace    plemiona-roker
-// @version      1.8.0
+// @version      1.9.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @description  Podpowiada, gdzie założyć relikty zależnie od celu: atak, obrona albo szybsza rekrutacja w wybranej grupie wiosek
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.8.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.9.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 (function () {
@@ -992,10 +992,12 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
         </details>
 
         <h3>4. Flagi</h3>
+        <div class="rp-row"><label><input type="checkbox" id="rp-flagson" ${S.useFlags || S.reuseFlags ? 'checked' : ''}> planuj też flagi (odznacz = <b>tylko relikty</b>)</label></div>
+        ${S.useFlags || S.reuseFlags ? `
         <div class="rp-row"><label><input type="checkbox" id="rp-flags" ${S.useFlags ? 'checked' : ''}> uwzględnij nieprzypisane flagi (${esc(flagSummary)})</label></div>
         <div class="rp-row"><label><input type="checkbox" id="rp-cdchk" ${S.checkCd ? 'checked' : ''}> sprawdź blokady 24 h zmiany flag (1 zapytanie na wioskę) – zablokowane wioski zostają bez zmian</label> <span id="rp-cdstatus" class="rp-muted"></span></div>
         <div class="rp-row"><label><input type="checkbox" id="rp-reflags" ${S.reuseFlags ? 'checked' : ''}> uwzględnij też flagi tego typu już przypisane do wiosek (${flagAssigned.length} szt.${flagAssigned.length ? ': ' + flagAssigned.map((a) => '+' + a.pct + '%').join(', ') : ''}) – przeniosę je</label></div>
-        <div class="rp-muted">Flagi działają osobno od reliktów (bez wspólnego limitu), więc trafiają do wiosek o największej wadze. Przeniesienie flagi wymaga jej wycofania (cooldown 24 h).</div>
+        <div class="rp-muted">Flagi działają osobno od reliktów (bez wspólnego limitu), więc trafiają do wiosek o największej wadze. Przeniesienie flagi wymaga jej wycofania (cooldown 24 h).</div>` : '<div class="rp-muted">Tryb: tylko relikty – flagi nie są liczone ani zmieniane.</div>'}
 
         <div class="rp-row" style="margin-top:12px"><button id="rp-run" type="button">Policz najlepsze ustawienie</button></div>
         <div class="rp-bar" id="rp-barwrap" style="display:none"><div id="rp-bar"></div></div>
@@ -1022,8 +1024,12 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       q('#rp-regex').onchange = async (e) => { S.regex = e.target.value.trim(); persist(); await applyGroup(); render(); };
       q('#rp-slots').onchange = (e) => { S.slots = Math.max(1, intOf(e.target.value)); persist(); };
       q('#rp-cap').onchange = (e) => { S.cap = Math.max(1, num(e.target.value)); persist(); };
-      q('#rp-reflags').onchange = (e) => { S.reuseFlags = e.target.checked; persist(); };
-      q('#rp-flags').onchange = (e) => { S.useFlags = e.target.checked; persist(); };
+      q('#rp-flagson').onchange = (e) => { S.useFlags = S.reuseFlags = e.target.checked; persist(); render(); };
+      if (q('#rp-reflags')) {
+        q('#rp-reflags').onchange = (e) => { S.reuseFlags = e.target.checked; persist(); render(); };
+        q('#rp-flags').onchange = (e) => { S.useFlags = e.target.checked; persist(); render(); };
+        q('#rp-cdchk').onchange = (e) => { S.checkCd = e.target.checked; persist(); };
+      }
       q('#rp-lslot').onchange = (e) => { S.lockedSlot = e.target.checked; persist(); };
       q('#rp-cd').onchange = (e) => { S.ignoreCd = e.target.checked; persist(); render(); };
       const fc = q('#rp-freecap');
@@ -1042,7 +1048,6 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
         if (c.checked) S.offRelic.delete(id); else S.offRelic.add(id);
         persist();
       }));
-      q('#rp-cdchk').onchange = (e) => { S.checkCd = e.target.checked; persist(); };
       q('#rp-run').onclick = async () => {
         if (S.checkCd && (S.useFlags || S.reuseFlags)) {
           const st = q('#rp-cdstatus');
