@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.21
+// @version      3.22
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.21',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.22',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -544,6 +544,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
       if (!rows.length) return;
       const th = Array.from(table.querySelectorAll('th')).find((x) => /^(Cel|Target|Ziel)$/i.test(x.textContent.trim()));
       const targetCol = th ? Array.from(th.parentElement.children).indexOf(th) : -1;
+      const oth = Array.from(table.querySelectorAll('th')).find((x) => /^(Pochodzenie|Origin|Herkunft)$/i.test(x.textContent.trim()));
+      const originCol = oth ? Array.from(oth.parentElement.children).indexOf(oth) : -1;
 
       if (!$('klin-bar')) {
         const bar = document.createElement('div');
@@ -576,6 +578,34 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro
           startPlanner(st.pending);
         });
         (tr.querySelector('td') || tr).appendChild(b);
+
+        // etykieta „… | return dd.mm hh:mm:ss” (powrót wojsk wroga po ataku na nas): klin na wracających – atak na wioskę
+        // wroga (kolumna Pochodzenie) tuż PO ich powrocie. Ułamek sekundy bierzemy z przybycia ataku (powrót = przybycie + całe sekundy).
+        const rm = tr.textContent.replace(/\s+/g, ' ').match(/return\s+(\d{1,2})\.(\d{1,2})\.?\s+(\d{1,2}):(\d{2}):(\d{2})/i);
+        const oc = originCol >= 0 && tr.children[originCol] ? (tr.children[originCol].textContent.match(/\((\d{1,3}\|\d{1,3})\)/) || [])[1] : null;
+        if (rm && oc && kind === 'in') {
+          const frac = ((at % 1000) + 1000) % 1000;
+          const ret = epochOf(((+rm[3] * 60 + +rm[4]) * 60 + +rm[5]) * 1000 + frac, dayDiff(+rm[1], +rm[2]));
+          const r = document.createElement('a');
+          r.href = '#';
+          r.className = 'klin-btn';
+          r.textContent = '↩';
+          r.title = `Klin na wracające wojska wroga: atak na (${oc}) tuż po ich powrocie (${fmtClock(ret)})`;
+          r.style.cssText = 'margin-left:4px;text-decoration:none;font-size:13px';
+          r.addEventListener('click', (e) => {
+            e.preventDefault();
+            const t = ret + st.wedge;
+            if (t < now() + 3000) { toast('Klin: te wojska już wróciły albo wracają za chwilę.'); return; }
+            const il = tr.querySelector('a[href*="info_command"]');
+            st.pending = { coords: oc, t, attack: ret, attackUrl: il ? il.getAttribute('href') : null, ts: Date.now(), ret: true };
+            st.retry = null;
+            st.last = null;
+            save();
+            toast(`Klin na powrót wroga: wejście ${fmtClock(t)} na (${oc}). Sprawdzam, które wioski zdążą.`);
+            startPlanner(st.pending);
+          });
+          (tr.querySelector('td') || tr).appendChild(r);
+        }
       });
     });
   }
@@ -672,7 +702,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
       ? `⏱ Klin z cofki w tej wiosce: wejście <b>${fmtClock(p.t)}</b>.` +
         (p.dest ? ` Cel: <b>${p.dest}</b> (własna wioska, wyślij jako <b>Wsparcie</b>).` : ' Wybierz pobliską wioskę jako cel.') +
         `${unitNote} Na potwierdzeniu wyliczę moment wysłania i cofnięcia. <a href="#" id="klin-cancel-p">anuluj klin</a>`
-      : `⏱ Klin: cel <b>${p.coords}</b>${filled ? '' : ''}, wejście <b>${fmtClock(p.t)}</b>.${unitNote} Normalny klin, jeśli zdążysz; jeśli nie, skrypt podpowie klin z cofki z wioski ${p.coords}. <a href="#" id="klin-cancel-p">anuluj klin</a>`;
+      : `⏱ Klin: cel <b>${p.coords}</b>${filled ? '' : ''}, wejście <b>${fmtClock(p.t)}</b>.${unitNote} ${p.ret ? 'Atak na wioskę wroga tuż po powrocie jego wojsk (powrót ' + fmtClock(p.attack) + ').' : 'Normalny klin, jeśli zdążysz; jeśli nie, skrypt podpowie klin z cofki z wioski ' + p.coords + '.'} <a href="#" id="klin-cancel-p">anuluj klin</a>`;
     form.parentElement.insertBefore(h, form);
     h.querySelector('#klin-cancel-p').addEventListener('click', (e) => { e.preventDefault(); delete st.pending; save(); h.remove(); });
   }
@@ -830,7 +860,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
     const direct = !T; // tryb bezpośredni: atak na wioskę bez zadanej godziny – sam podgląd, z których wiosek i czym można zaatakować
     const head = direct
       ? `<b>⏱ Klin PRO – atak na (${esc(pend.coords)})</b> <span class="far">z których wiosek i czym możesz zaatakować</span>`
-      : `<b>⏱ Klin PRO – planowanie</b> <span class="far">wejście o ${fmtClock(T)} na (${esc(pend.coords)})</span>`;
+      : `<b>⏱ Klin PRO – planowanie</b> <span class="far">wejście o ${fmtClock(T)} na (${esc(pend.coords)})</span>` + (pend.ret ? ` <span class="far">– wracające wojska wroga, powrót ${fmtClock(pend.attack)}</span>` : '');
     const fallback = `<a href="${gameUrl(game_data.village.id, 'place')}">przejdź na plac</a>`;
     if (!direct && T < now() + 3000) { say(head + '<div class="row late">Ten czas już minął albo jest za blisko.</div>'); return; }
     say(head + '<div class="row">Pobieram dane świata i listę wiosek…</div>');
@@ -856,7 +886,7 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
       // otwieranie placu: w tej samej karcie albo (zaznaczony check) w nowej – planer zostaje w starej
       const openUrl = (url) => { if (st.planTab) window.open(url, '_blank'); else location.href = url; };
       const go = (vid, extra) => {
-        st.pending = Object.assign({ coords: pend.coords, t: T, attack: pend.attack, attackUrl: pend.attackUrl, ts: Date.now() }, extra);
+        st.pending = Object.assign({ coords: pend.coords, t: T, attack: pend.attack, attackUrl: pend.attackUrl, ts: Date.now(), ret: pend.ret }, extra);
         st.last = null;
         st.retry = null;
         save();
