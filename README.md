@@ -5,7 +5,7 @@ Skrypty do Tampermonkey / Violentmonkey. Kliknij link **Instaluj** – przegląd
 | Skrypt | Wersja | Instalacja |
 |---|---|---|
 | Plemiona – Cofanie wojsk wg wiosek (gracz → wioska → wycofaj) | 1.1 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/cofanie-wg-wiosek.user.js) |
-| Dostawy MK - drzewo do celu (bicie monet) | 2.4.3 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js) |
+| Dostawy MK - drzewo do celu (bicie monet) | 2.4.4 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js) |
 | Duże strzałki przełączania wiosek | 1.2 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/duze-strzalki-wiosek.user.js) |
 | Dysponent Grup – wysyłka | 1.13.0 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/dysponent-grup-wysylka.user.js) |
 | Plemiona - Giełda Premium: alarm + wypełniacz | 5.56 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/gielda-premium.user.js) |

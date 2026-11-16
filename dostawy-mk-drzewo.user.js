@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dostawy MK - drzewo do celu (bicie monet)
 // @namespace    dostawy-mk-drzewo
-// @version      2.4.3
+// @version      2.4.4
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @description  Menedżer konta > Dostawy: (1) zaopatrzenie nowych wiosek pod budowę i rekrutację, (2) liczy najszybsze trasy (każda wioska jeden cel, przerzuty przez wioski z kupcami) do wioski bijącej monety i po kliknięciu podmienia harmonogramy dostaw.
@@ -11,7 +11,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.4.3',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.4.4',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI */
@@ -597,7 +597,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				<tr><td>Wysyłają wioski z grupy</td><td><select id="${NS}_fg"><option value="${esc(S.fromGroup)}">wczytuję grupy…</option></select></td></tr>
 				<tr><td>Powtarzanie</td><td><input id="${NS}_i" size="5" value="${esc(S.interval)}"> <span class="grey">jak w Menedżerze, 00:01 = co minutę</span></td></tr>
 				<tr><td>Menedżer realnie wysyła co</td><td><input id="${NS}_re" size="3" value="${S.realEvery || ''}" placeholder="auto"> min <span class="grey">puste = skrypt oszacuje z zajętych kupców (zwykle ~2 min, mimo ustawionego 00:01)</span></td></tr>
-				<tr><td>Pomiń wioski</td><td><input id="${NS}_x" size="24" value="${esc(S.exclude)}"> <span class="grey">współrzędne po przecinku</span> · dalej niż <input id="${NS}_md" size="2" value="${S.maxDist}"> pól od celu pomijaj · spichlerz mniejszy niż <input id="${NS}_mc" size="3" value="${S.minCap}">k pomijaj</td></tr>
+				<tr><td>Pomiń wioski</td><td><input id="${NS}_x" size="24" value="${esc(S.exclude)}"> <span class="grey">współrzędne po przecinku</span> · dalej niż <input id="${NS}_md" size="2" value="${S.maxDist}"> pól od celu pomijaj</td></tr>
+				<tr><td>Małe wioski</td><td>pomijaj, gdy spichlerz mniejszy niż <input id="${NS}_mc" size="4" value="${S.minCap}"> tys. <span class="grey">(0 = nie pomijaj)</span></td></tr>
 				<tr><td>Przystanki / paczka</td><td>najwyżej <input id="${NS}_hops" size="2" value="${S.maxHops}"> przystanki, paczka min <input id="${NS}_minp" size="2" value="${S.minPerRes}"> max <input id="${NS}_max" size="3" value="${S.maxPerRes}"> tys. jednego surowca na turę</td></tr>
 				<tr><td>Pełny pośrednik dostaje</td><td>najwyżej <input id="${NS}_rs" size="3" value="${S.fullShare}">% tego, co sam odda (pełny = mniej niż <input id="${NS}_pr" size="2" value="${S.packageRoom}">% wolnego spichlerza) <span class="grey">- reszta jego kupców opróżnia jego zapas; mniej % = szybciej się opróżnia, a dalsze wioski szukają innych pośredników. Z miejscem w spichlerzu - pełny dopływ</span></td></tr>
 				<tr><td>Ochrona przed przelaniem</td><td><label><input type="checkbox" id="${NS}_prot" ${S.protect ? 'checked' : ''}> licz na</label> <input id="${NS}_ph" size="2" value="${S.protectHours}"> h naprzód <span class="grey">(np. na noc) - zmniejsza paczki, które przelałyby spichlerz pośrednika</span> <label style="margin-left:8px"><input type="checkbox" id="${NS}_pmint" ${S.protectMints ? 'checked' : ''}> także mennic</label></td></tr>
