@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dostawy MK - drzewo do celu (bicie monet)
 // @namespace    dostawy-mk-drzewo
-// @version      2.5.0
+// @version      2.5.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @description  Menedżer konta > Dostawy: (1) zaopatrzenie nowych wiosek pod budowę i rekrutację, (2) liczy najszybsze trasy (każda wioska jeden cel, przerzuty przez wioski z kupcami) do wioski bijącej monety i po kliknięciu podmienia harmonogramy dostaw.
@@ -11,7 +11,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.5.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.5.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI */
@@ -355,42 +355,39 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 	}
 
 	// ================= PROPORCJA MONETY =================
-	// Dla każdej mennicy: ile monet da się wybić z zapasu jej wiosek + tego, co już leży w mennicy (najmniej liczny surowiec).
-	// Z każdego surowca wysyłamy tylko tyle, ile pójdzie na te monety; każda wioska oddaje „swoją” część tego
-	// (paczka proporcjonalna do jej zapasu, który pójdzie w monety - razem z tym, co przewozi od innych), więc do mennicy
-	// wpływa D:G:Ż jak w monecie i nic się w niej nie odkłada. Nadmiar (np. żelazo) zostaje w wioskach - do wymiany na miejscu.
+	// Każda paczka to dokładnie ułamek monety (np. 16,8 : 18 : 15) - niezależnie od zapasów wiosek i mennicy.
+	// Do mennicy zawsze wpływa D:G:Ż jak w monecie, więc żaden surowiec się w niej nie zbiera. Wioska wysyła, dopóki ma
+	// komplet; co jej zostaje ponad proporcję (np. żelazo), zostaje w niej.
+	const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+	function coinUnit(t) {								// najmniejsza paczka w dokładnej proporcji (sztuki surowca)
+		const c = coinCostOf(t).map(x => Math.round(x * 1000)), g = c.reduce((a, b) => gcd(a, b));
+		return c.map(x => x / g);
+	}
+	// paczka o łącznej wielkości ok. tot (tys.) w dokładnej proporcji monety
+	function snapRatio(tot, unit) {
+		const u = unit[0] + unit[1] + unit[2], m = Math.max(1, Math.round(tot * 1000 / u));
+		return unit.map(x => x * m / 1000);
+	}
+	function sinkOfPlan(plan, p) { let x = p, h = 0; while (x && !x.isSink && h < 10) { const to = x.to; x = plan.find(q => q.v === to); h++; } return x ? x.to : null; }
 	function coinRatio(plan, sinks) {
-		const sinkOf = p => { let x = p, h = 0; while (x && !x.isSink && h < 10) { const to = x.to; x = plan.find(q => q.v === to); h++; } return x ? x.to : null; };
-		const kids = new Map();
-		plan.forEach(p => { if (!p.isSink) { if (!kids.has(p.to)) { kids.set(p.to, []); } kids.get(p.to).push(p); } });
-		const info = [];
-		const use = new Map();							// mennica -> udział każdego surowca, który idzie w monety (0..1)
-		sinks.forEach(t => {
-			const mine = plan.filter(p => sinkOf(p) === t);
-			if (!mine.length) { return; }
-			const c = coinCostOf(t), V = [0, 1, 2].map(k => mine.reduce((a, p) => a + p.v.res[k], 0) / 1000), M = (t.res || [0, 0, 0]).map(x => x / 1000);
-			const coins = Math.floor(Math.min(...[0, 1, 2].map(k => (V[k] + M[k]) / c[k])));
-			const send = [0, 1, 2].map(k => Math.max(0, Math.min(V[k], coins * c[k] - M[k])));
-			use.set(t, send.map((x, k) => V[k] > 0 ? x / V[k] : 0));
-			info.push({ t: t, coins: coins, rest: V.map((x, k) => Math.round(x - send[k])), lim: [0, 1, 2].reduce((a, k) => (V[k] + M[k]) / c[k] < (V[a] + M[a]) / c[a] ? k : a, 0) });
-		});
-		const W = new Map();
-		const weight = p => {
-			if (W.has(p)) { return W.get(p); }
-			W.set(p, [0, 0, 0]);
-			const u = use.get(sinkOf(p)) || [1, 1, 1];
-			const w = p.v.res.map((x, k) => x / 1000 * u[k]);
-			(kids.get(p.v) || []).forEach(ch => { const cw = weight(ch); w[0] += cw[0]; w[1] += cw[1]; w[2] += cw[2]; });
-			W.set(p, w);
-			return w;
-		};
 		plan.forEach(p => {
-			const w = weight(p), sw = w[0] + w[1] + w[2], tot = p.pack.reduce((a, b) => a + b, 0);
-			if (sw <= 0 || tot <= 0) { return; }
-			p.pack = w.map(x => Math.round(x / sw * tot * 10) / 10);
+			const t = sinkOfPlan(plan, p), tot = p.pack.reduce((a, b) => a + b, 0);
+			if (!t || tot <= 0) { return; }
+			p.pack = snapRatio(tot, coinUnit(t));
 			p.ratio = true;
 		});
-		return info;
+		// ile monet da zapas (każda wioska do wyczerpania najrzadszego surowca) i co zostaje w wioskach
+		return sinks.map(t => {
+			const c = coinCostOf(t), mine = plan.filter(p => sinkOfPlan(plan, p) === t);
+			if (!mine.length) { return null; }
+			let coins = 0; const rest = [0, 0, 0];
+			mine.forEach(p => {
+				const n = Math.min(...[0, 1, 2].map(k => p.v.res[k] / 1000 / c[k]));
+				coins += n;
+				[0, 1, 2].forEach(k => { rest[k] += p.v.res[k] / 1000 - n * c[k]; });
+			});
+			return { t: t, coins: Math.floor(coins), rest: rest.map(Math.round) };
+		}).filter(Boolean);
 	}
 
 	// ================= WOLNE ZSYŁANIE Z PRODUKCJI =================
@@ -501,7 +498,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				r.nextAt = m + Math.max(turn, r.every || 0);
 				const x = st.get(r.s);
 				// wspólna dostawa = jedna paczka D+G+Ż; osobne = każdy surowiec rusza sam
-				const parts = S.splitRes ? [0, 1, 2].filter(k => r.pack[k] > 0).map(k => { const q = [0, 0, 0]; q[k] = r.pack[k]; return q; }) : [r.pack];
+				const parts = S.splitRes && !S.coinRatio ? [0, 1, 2].filter(k => r.pack[k] > 0).map(k => { const q = [0, 0, 0]; q[k] = r.pack[k]; return q; }) : [r.pack];
 				for (const q of parts) {
 					const need = Math.ceil(q[0] + q[1] + q[2] - 1e-9);
 					if ((r.s.merchants || 0) - x.busy < need) { continue; }
@@ -539,7 +536,10 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				return roomB - roomA || b.sent[k] - a.sent[k];
 			});
 			if (!cand.length) { blocked.add(worst.v.coords + k); continue; }
-			cand[0].pack[k] = Math.max(0, Math.round((cand[0].pack[k] - 1) * 10) / 10);
+			if (cand[0].p.ratio) {				// proporcja monety: mniejsza cała paczka, proporcja zostaje
+				const t = sinkOfPlan(plan, cand[0].p), u = coinUnit(t), cur0 = cand[0].pack.reduce((a, b) => a + b, 0);
+				cand[0].pack = cur0 > 3 ? snapRatio(cur0 - 3, u) : [0, 0, 0];
+			} else { cand[0].pack[k] = Math.max(0, Math.round((cand[0].pack[k] - 1) * 10) / 10); }
 			cur = simulate(routes, villages, sinks, minutes);
 		}
 		const changes = routes.filter(r => r.pack.some((x, k) => x !== r.orig[k]));
@@ -646,7 +646,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				<tr><td>Wolne zsyłanie z produkcji</td><td><label><input type="checkbox" id="${NS}_pm" ${S.prodMode ? 'checked' : ''}> co godzinę prosto do najbliższej mennicy</label> <input id="${NS}_ps" size="3" value="${S.prodShare}">% produkcji wioski, rozwinięta <input id="${NS}_ds" size="3" value="${S.devShare}">%<br><span class="grey">rozwinięta = zagroda ≥ <input id="${NS}_dpm" size="5" value="${S.devPopMax}"> miejsc, zajęta ≥ <input id="${NS}_dpf" size="2" value="${S.devPopFill}">%, wioska ≥ <input id="${NS}_dp" size="5" value="${S.devPoints}"> pkt</span></td></tr>
 				<tr><td>Tryb spokojny</td><td><label><input type="checkbox" id="${NS}_calm" ${S.calm ? 'checked' : ''}> zamiast pełnych obrotów: surowce na</label> <input id="${NS}_cpd" size="4" value="${S.coinsPerDay}"> monet na dobę <span class="grey">(1 szlachcic dziennie = tyle monet, ile wynosi następny limit szlachciców, np. 127)</span></td></tr>
 				<tr><td>Wymiana opłaca się od</td><td><input id="${NS}_mx" size="4" value="${S.minExchange}"> tys. surowca naraz <span class="grey">(np. 10 PP za wymianę u handlarza)</span></td></tr>
-				<tr><td>Proporcja monety</td><td><label><input type="checkbox" id="${NS}_ratio" ${S.coinRatio ? 'checked' : ''}> paczki w proporcji kosztu monety</label> <span class="grey">(liczone z zapasów wiosek i stanu mennicy - do mennicy wpływa tyle D/G/Ż, ile zje, nic się nie przelewa; nadmiar zostaje w wioskach)</span></td></tr>
+				<tr><td>Proporcja monety</td><td><label><input type="checkbox" id="${NS}_ratio" ${S.coinRatio ? 'checked' : ''}> każda paczka dokładnie w proporcji monety</label> <span class="grey">(np. 16,8 : 18 : 15, zawsze jedna wspólna D+G+Ż, niezależnie od zapasów - w mennicy nic się nie zbiera; co ponad proporcję, zostaje w wioskach)</span></td></tr>
 				<tr><td>Rodzaj dostawy</td><td><label><input type="checkbox" id="${NS}_split" ${S.splitRes ? 'checked' : ''}> osobna dostawa na każdy surowiec</label> <span class="grey">(odznaczone = jedna dostawa drewno + glina + żelazo razem, np. 1000/1000/1000)</span></td></tr>
 			</table>
 			<div style="margin:6px 0"><input type="button" class="btn" id="${NS}_calc" value="Policz trasy"></div>
@@ -775,9 +775,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 			prodInfo = { dev: plan.filter(p => p.dev).length, n: plan.length, perH: perH, coins: Math.round(perH * 24 / costK), levels: !!mineLevels };
 		} else if (S.calm) { calmCoins = calmPlan(plan, sinks); }
 		let ratioInfo = null;
-		if (!S.prodMode && S.coinRatio) { ratioInfo = coinRatio(plan, sinks); }
 		let throttledN = 0;
 		if (!S.prodMode) { throttleRelays(plan); throttledN = plan.filter(p => p.throttled).length; }
+		if (S.coinRatio) { ratioInfo = coinRatio(plan, sinks); }	// na końcu: każda paczka dokładnie w proporcji monety
 		// symulacja na kilka godzin: czy coś się przeleje; z ochroną - od razu poprawione paczki
 		const simVillages = villages.filter(v => nodes.indexOf(v) > -1 || sinks.indexOf(v) > -1);
 		let prot = null;
@@ -797,7 +797,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 			Koszt monety: ${sinks.map(t => esc(t.name) + ' ' + coinCostOf(t).join('/') + 'k').join(', ')}<br>
 			${prodInfo ? `<b>Wolne zsyłanie z produkcji:</b> co godzinę ${prodInfo.n - prodInfo.dev} wiosek po ${S.prodShare}% produkcji, ${prodInfo.dev} rozwiniętych po ${S.devShare}% → do mennic ok. <b>${fmt(prodInfo.perH)} tys./h</b> ≈ <b>${prodInfo.coins}</b> monet na dobę. <span class="grey">${prodInfo.levels ? 'Produkcja z poziomów kopalń (przegląd Budynki).' : 'Nie odczytałem poziomów kopalń - przyjęta produkcja bieżącej wioski dla wszystkich.'} Rozwinięta = zagroda ≥ ${S.devPopMax} miejsc zajęta w ≥ ${S.devPopFill}% i ≥ ${S.devPoints} pkt.</span><br>` : ''}
 			${calmCoins ? `<b>Tryb spokojny:</b> cel ${S.coinsPerDay} monet/dobę → dojedzie na ok. <b>${calmCoins.reduce((a, b) => a + b, 0)}</b> (${sinks.map((t, i) => esc(t.name) + ' ' + calmCoins[i]).join(', ')}) - co najmniej tyle, ile wioski produkują, żeby się nie przelewały.<br>` : ''}
-			${ratioInfo && ratioInfo.length ? `<b>Proporcja monety:</b> ${ratioInfo.map(r => `${esc(r.t.name)} ok. <b>${r.coins}</b> monet z zapasu (mało ${['drewna', 'gliny', 'żelaza'][r.lim]})` + (r.rest.some(x => x >= 20) ? `, w wioskach zostaje nadmiar ${r.rest.map((x, k) => x >= 20 ? x + 'k ' + ['D', 'G', 'Ż'][k] : '').filter(Boolean).join(' ')} - wymień go na miejscu` : '')).join('; ')}. <span class="grey">Paczki w proporcji - mennice się nie zapychają.</span><br>` : ''}
+			${ratioInfo && ratioInfo.length ? `<b>Proporcja monety:</b> ${ratioInfo.map(r => `${esc(r.t.name)} ok. <b>${r.coins}</b> monet z zapasu` + (r.rest.some(x => x >= 20) ? ` (w wioskach zostaje ponad proporcję ${r.rest.map((x, k) => x >= 20 ? x + 'k ' + ['D', 'G', 'Ż'][k] : '').filter(Boolean).join(' ')} - do wymiany na miejscu)` : '')).join('; ')}. <span class="grey">Każda paczka to dokładnie ${coinCostOf(sinks[0]).map(x => fmt(x)).join(' : ')} (jedna wspólna D+G+Ż) - do mennicy wpływa tylko to, co idzie w monety, nic się nie zbiera.</span><br>` : ''}
 			${throttledN ? `Pośrednicy: ${throttledN} tras wysyła mniej, żeby pełny pośrednik dostawał najwyżej ${S.fullShare}% tego, co sam odda (opróżnia się, nie przeleje przy pakietach).<br>` : ''}
 			Menedżer wysyła realnie co <b>${fmt(turnMinutes())} min</b> <span class="grey">(${S.realEvery > 0 ? 'wpisane ręcznie' : measured && measured.n >= 3 ? 'zmierzone z kupców ' + measured.n + ' tras' : 'za mało danych do pomiaru - przyjęte 2 min'}) - paczki są na tyle większe</span></p>
 			<table class="vis" style="width:100%"><tr><th>Uwzgl.</th><th>Wioska</th><th>Wysyła do</th><th>Pola</th><th>Kurs</th><th>Kupcy</th><th>Przepływ</th><th>Paczka (D/G/Ż tys.)</th><th>Co</th></tr>`;
@@ -875,7 +875,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 
 	// harmonogramy jednej trasy: jeden D+G+Ż albo osobny na każdy surowiec; same zera = brak harmonogramu
 	function planRes(p) {
-		if (!S.splitRes) { return p.pack.some(x => x > 0) ? [p.pack.map(x => Math.round(x * 1000))] : []; }
+		if (!S.splitRes || p.ratio) { return p.pack.some(x => x > 0) ? [p.pack.map(x => Math.round(x * 1000))] : []; }	// proporcja = zawsze wspólna paczka
 		return [0, 1, 2].filter(k => p.pack[k] > 0).map(k => { const r = [0, 0, 0]; r[k] = Math.round(p.pack[k] * 1000); return r; });
 	}
 
