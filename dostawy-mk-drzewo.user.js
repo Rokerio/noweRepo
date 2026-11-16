@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Dostawy MK - drzewo do celu (bicie monet)
 // @namespace    dostawy-mk-drzewo
-// @version      2.4.4
+// @version      2.4.5
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/dostawy-mk-drzewo.user.js
 // @description  Menedżer konta > Dostawy: (1) zaopatrzenie nowych wiosek pod budowę i rekrutację, (2) liczy najszybsze trasy (każda wioska jeden cel, przerzuty przez wioski z kupcami) do wioski bijącej monety i po kliknięciu podmienia harmonogramy dostaw.
@@ -11,7 +11,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.4.4',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-mk-drzewo']={v:'2.4.5',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, jQuery, UI */
@@ -950,7 +950,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		const delForm = $('input[name="trading_routes[]"]').first().closest('form')[0];
 		if (!f) { msg.err('Nie znalazłem formularza „Utwórz harmonogram dostaw”.'); return; }
 		batchStop = false;
-		let routes = readRoutes(), done = 0, skipped = 0;
+		let routes, done = 0, skipped = 0, failed = false;
+		try { routes = await fetchRoutes(); } catch (e) { routes = readRoutes(); }		// pełna lista (bez filtra grupy) - punkt odniesienia
 		const bar = $(`<div id="${NS}_qbar" class="info_box" style="margin:0 0 10px 0;padding:8px;font-size:13px"><b>Dostawy - robię sam:</b> <span id="${NS}_bprog">0 / ${steps.length}</span> <a href="#" id="${NS}_bstop" style="margin-left:10px">zatrzymaj</a><div id="${NS}_bnow" class="grey"></div></div>`);
 		$('#content_value').prepend(bar);
 		$('#' + NS + '_bstop').on('click', e => { e.preventDefault(); batchStop = true; });
@@ -964,6 +965,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 			for (let attempt = 0; attempt < 2 && !ok; attempt++) {
 				try {
 					let doc;
+					const before = routes.map(r => r.id);
 					if (st.t === 'del') {
 						const ids = st.ids.filter(id => routes.some(r => r.id === id));
 						if (!ids.length) { ok = true; break; }
@@ -974,20 +976,27 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 						doc = await postForm(f.action, newRouteBody(f, st.d));
 					}
 					routes = await fullRoutes(doc);
-					ok = verify(st, routes);
+					ok = verify(st, routes) || !!createdNow(st, routes, before);
 					// nie widać? zajrzyj jeszcze raz w pełną listę, zanim wyślesz drugi raz (inaczej duplikat)
-					if (!ok) { await sleep(1500); routes = await fetchRoutes(); ok = verify(st, routes); }
-					if (!ok) { err = $(doc).find('.error_box').text().replace(/\s+/g, ' ').trim(); }
+					if (!ok) { await sleep(1500); routes = await fetchRoutes(); ok = verify(st, routes) || !!createdNow(st, routes, before); }
+					const cr = createdNow(st, routes, before);
+					if (ok && cr && !verify(st, routes)) { console.warn('Dostawy: gra zapisała inaczej', st.label, descR(cr)); }
+					if (!ok) {
+						const same = sameTrip(st, routes);
+						err = gameMsg(doc) + (same.length ? ' (na liście ta trasa jest jako: ' + same.map(descR).join(', ') + ')' : ' (tej trasy nie ma na liście; harmonogramów: ' + routes.length + ')');
+					}			// pełna lista bez nowego harmonogramu tej trasy = gra nic nie zapisała, drugi raz można bez duplikatu
 				} catch (e) { err = e.message || String(e); await sleep(1500); }
 			}
 			if (!ok) {
 				log.css('color', '#a00').text('Zatrzymane na kroku ' + (i + 1) + ': ' + st.label + (err ? ' - gra: ' + err : ' - gra nie zapisała.') + ' Kliknij „Policz trasy” jeszcze raz.');
 				msg.err('Dostawy: krok się nie udał - zatrzymuję.');
+				failed = true;
 				break;
 			}
 			done++;
 			await sleep(450 + Math.random() * 500);			// spokojnie, jak człowiek
 		}
+		if (failed) { $('#' + NS + '_bnow').text('Zrobione: ' + done + ' kroków, potem stop (powód niżej, strona się nie odświeża).'); return; }
 		$('#' + NS + '_bnow').text('Gotowe: ' + done + ' kroków' + (skipped ? ', pominięte (już były): ' + skipped : '') + '. Odświeżam stronę…');
 		if (!batchStop) { msg.ok('Dostawy: zrobione ' + done + ' kroków.', 6000); setTimeout(() => location.reload(), 1500); }
 	}
@@ -1018,6 +1027,24 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		return routes.some(r => r.start === d.sx + '|' + d.sy && r.target === d.tx + '|' + d.ty &&
 			r.res.length === 3 && r.res.every((x, k) => x === d.res[k]) && sameTime(r.time, d.time));
 	}
+
+	// nowy harmonogram tej samej trasy, którego nie było przed zapisem (gra mogła zaokrąglić paczkę albo czas) = zapisany
+	function createdNow(step, routes, before) {
+		if (step.t !== 'new' || !before) { return null; }
+		const d = step.d, old = new Set(before);
+		return routes.find(r => !old.has(r.id) && r.start === d.sx + '|' + d.sy && r.target === d.tx + '|' + d.ty) || null;
+	}
+	// co gra odpowiedziała (komunikat błędu bywa w skrypcie UI.ErrorMessage, nie w .error_box; ochrona przed botami)
+	function gameMsg(doc) {
+		if (!doc) { return ''; }
+		const t = [];
+		$(doc).find('.error_box, .autoHideBox.error').each(function () { t.push($(this).text()); });
+		$(doc).find('script').each(function () { const m = (this.textContent || '').match(/UI\.(?:Error|Info)Message\(\s*(['"])([\s\S]*?)\1/); if (m) { t.push(m[2]); } });
+		if ($(doc).find('#bot_check, .bot-protection-row, [data-bot-protect], #botprotection_quest').length || /bot_check|botprotection|hcaptcha|captcha/i.test(doc.documentElement ? doc.documentElement.innerHTML.slice(0, 200000) : '')) { t.push('OCHRONA PRZED BOTAMI - otwórz grę i rozwiąż zagadkę'); }
+		return t.join(' ').replace(/\s+/g, ' ').trim().slice(0, 300);
+	}
+	const sameTrip = (step, routes) => step.t === 'new' ? routes.filter(r => r.start === step.d.sx + '|' + step.d.sy && r.target === step.d.tx + '|' + step.d.ty) : [];
+	const descR = r => r.res.map(x => x / 1000).join('/') + ' co ' + r.time;
 
 	// świeża lista harmonogramów (Safari potrafi pokazać po zapisie starą stronę z pamięci)
 	async function fetchRoutes() {
@@ -1075,15 +1102,17 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 		}
 		try { sessionStorage.removeItem(NS + '_grp'); } catch (e) { /* ignore */ }
 		if (q.pending) {
-			let ok = verify(q.pending);
-			if (!ok) { try { ok = verify(q.pending, await fetchRoutes()); } catch (e) { /* zostaje nie */ } }
+			let ok = verify(q.pending) || !!createdNow(q.pending, readRoutes(), q.pending.before);
+			let fresh = null;
+			if (!ok) { try { fresh = await fetchRoutes(); ok = verify(q.pending, fresh) || !!createdNow(q.pending, fresh, q.pending.before); } catch (e) { /* zostaje nie */ } }
 			if (ok || q.pending.t === 'del') {
 				if (ok) { q.done++; } else { q.steps.unshift(q.pending); }	// ponowne kasowanie niczego nie psuje
 				q.pending = null;
 				saveQ(q);
 			} else {
 				// nie zgaduj - nowy harmonogram tworzony drugi raz to duplikat
-				const gameErr = $('.error_box').text().replace(/\s+/g, ' ').trim();
+				const same = sameTrip(q.pending, fresh || readRoutes());
+				const gameErr = gameMsg(document) + (same.length ? ' Na liście ta trasa jest jako: ' + same.map(descR).join(', ') + '.' : '');
 				const pb = $(`<div id="${NS}_qbar" class="error_box" style="margin:0 0 10px 0;padding:8px;font-size:13px">
 					<b>Dostawy:</b> nie widzę na liście harmonogramu <b>${esc(q.pending.label)}</b>${gameErr ? '<br>Gra: ' + esc(gameErr) : ''}<br>
 					<a href="#" id="${NS}_qre">Utwórz go jeszcze raz</a> · <a href="#" id="${NS}_qok">jest zapisany - dalej</a> · <a href="#" id="${NS}_qstop2">przerwij</a></div>`);
@@ -1147,6 +1176,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['dostawy-
 				const pre = [f.elements.start_x.value, f.elements.start_y.value, f.elements.target_x.value, f.elements.target_y.value].join(',');
 				fill();
 				if (pre !== [d.sx, d.sy, d.tx, d.ty].join(',')) { console.warn('Dostawy: formularz był zmieniony', pre); }
+				step.before = readRoutes().map(r => r.id);
 				sent = true; q.steps.shift(); q.pending = step; saveQ(q);
 			});
 		}
