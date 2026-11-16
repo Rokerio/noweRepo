@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.23
+// @version      3.24
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.23',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.24',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -908,9 +908,9 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
           ` &nbsp;|&nbsp; <label><input type="checkbox" form="klin-noform" id="klin-plate" ${showLate ? 'checked' : ''}> ${direct ? 'pokaż też wioski bez wybranych jednostek' : 'pokaż też wioski, które nie zdążą'}</label>` +
           ` &nbsp;|&nbsp; <label><input type="checkbox" form="klin-noform" id="klin-ptab" ${st.planTab ? 'checked' : ''}> otwieraj w nowej karcie</label>` +
           ' &nbsp;|&nbsp; <a href="#" id="klin-prefresh"><b>⟳ Odśwież godziny</b></a> · <a href="#" id="klin-preload">pobierz wojska od nowa</a></div>';
-        if (pend.targetId) {
-          h += '<div class="row">Wejście o (opcjonalnie): <input type="text" form="klin-noform" id="klin-dt" placeholder="hh:mm:ss:ms" style="width:110px" value="' + (direct ? '' : esc(fmtClock(T).replace(/ \(.*\)$/, ''))) + '"> ' +
-            '<a href="#" id="klin-dset">ustaw godzinę (klin)</a>' + (direct ? '' : ' · <a href="#" id="klin-dclr">bez godziny (sam podgląd)</a>') + '</div>';
+        {
+          h += '<div class="row">Wejście o' + (direct ? ' (opcjonalnie)' : ' (wyliczone – wpisz własną, jeśli chcesz trafić inaczej)') + ': <input type="text" form="klin-noform" id="klin-dt" placeholder="hh:mm:ss:ms" style="width:110px" value="' + (direct ? '' : esc(fmtClock(T).replace(/ \(.*\)$/, ''))) + '"> ' +
+            '<a href="#" id="klin-dset">ustaw godzinę (klin)</a>' + (direct || !pend.targetId ? '' : ' · <a href="#" id="klin-dclr">bez godziny (sam podgląd)</a>') + '</div>';
         }
         return h;
       };
