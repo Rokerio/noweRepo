@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Klin PRO (normalny + z cofki, auto)
 // @namespace    dawid.plemiona
-// @version      3.22
+// @version      3.23
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/klin-pro.user.js
 // @description  Łączy "Klin: wejście na czas" i "Klin z cofki". Dobiera tryb (normalny / z cofki), wstrzymuje przycisk Wyślij do wyliczonego momentu (z regulowanym przyspieszeniem/opóźnieniem), uczy się Twojego przesunięcia. Nie klika za Ciebie.
@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.22',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['klin-pro']={v:'3.23',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -951,10 +951,11 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
         const okRows = [], lateRows = [], noneRows = [];
         V.forEach((r) => {
           const opts = sel.filter((u) => (r.units[u] || 0) >= minN).map((u) => ({ u, dur: durOf(r, u), n: r.units[u] }));
-          const good = opts.filter((o) => o.dur <= avail).sort((a, b) => b.dur - a.dur); // domyślnie najwolniejsza, która zdąży
-          if (good.length) okRows.push({ r, b: good[0], alts: good.slice(1), left: avail - good[0].dur });
-          else if (opts.length) { const f = opts.slice().sort((a, b) => a.dur - b.dur)[0]; lateRows.push({ r, b: f, alts: [], late: f.dur - (T - n) }); }
-          else noneRows.push({ r });
+          // liczymy dla NAJWOLNIEJSZEJ zaznaczonej jednostki w wiosce – to ona wyznacza czas dojścia, gdy wysyłasz wszystkie zaznaczone razem
+          const slow = opts.slice().sort((a, b) => b.dur - a.dur);
+          if (!slow.length) noneRows.push({ r });
+          else if (slow[0].dur <= avail) okRows.push({ r, b: slow[0], alts: [], all: slow, left: avail - slow[0].dur });
+          else lateRows.push({ r, b: slow[0], alts: [], all: slow, late: slow[0].dur - (T - n) });
         });
         okRows.sort((a, b) => b.left - a.left);
         lateRows.sort((a, b) => a.late - b.late);
@@ -963,15 +964,15 @@ const ix = document.querySelector('#inputx, input[name="x"]'), iy = document.que
 
         let html = head + ` <span class="far">wioski: ${V.length}, skala marszu ×${st.speedK}</span>`;
         html += controls(sel, minN, showLate);
-        html += `<div class="row"><b>Zdążą: ${okRows.length}</b> z ${V.length} wiosek (wybrane jednostki, zapas ${PLAN_MARGIN / 1000} s na wysłanie).</div>`;
+        html += `<div class="row"><b>Zdążą: ${okRows.length}</b> z ${V.length} wiosek (czas liczony dla najwolniejszej zaznaczonej jednostki w wiosce, zapas ${PLAN_MARGIN / 1000} s na wysłanie).</div>`;
 
-        const unitCell = (x) => `${esc(UNIT_PL[x.b.u] || x.b.u)} (${x.b.n})` + (x.alts.length
+        const unitCell = (x) => (x.all && x.all.length > 1 ? x.all.map((o) => `${esc(UNIT_PL[o.u] || o.u)} (${o.n})`).join(', ') : `${esc(UNIT_PL[x.b.u] || x.b.u)} (${x.b.n})`) + (x.alts.length
           ? `<br><span class="far">też: ` + x.alts.map((a) => `<a href="#" data-v="${x.r.v.id}" data-u="${a.u}">${esc(UNIT_PL[a.u] || a.u)} (${a.n})</a>`).join(', ') + '</span>' : '');
         const rowsHtml = [];
         okRows.forEach((x) => {
           const arr = n + x.b.dur;
           rowsHtml.push(`<tr><td>${esc(x.r.v.name)}</td><td>${unitCell(x)}</td><td>${mmss(x.b.dur)}</td><td>${fmtClock(T - x.b.dur).replace(/:\d{3}/, '')}</td>` +
-            `<td><b>${esc(UNIT_PL[x.b.u] || x.b.u)}:</b> ✔ dojdzie ${liveT(x.b.dur)}, zapas <span class="klin-z" data-dur="${x.b.dur}">${mmss(T - arr)}</span></td><td><a href="#" data-v="${x.r.v.id}">Wybierz</a></td></tr>`);
+            `<td><b>${esc(UNIT_PL[x.b.u] || x.b.u)} (najwolniejsza):</b> ✔ dojdzie ${liveT(x.b.dur)}, zapas <span class="klin-z" data-dur="${x.b.dur}">${mmss(T - arr)}</span></td><td><a href="#" data-v="${x.r.v.id}">Wybierz</a></td></tr>`);
         });
         if (showLate) {
           lateRows.forEach((x) => {
