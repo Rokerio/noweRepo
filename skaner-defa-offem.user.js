@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Skaner defa offem (auto)
 // @namespace    plemiona-roker
-// @version      2.1
-// @description  Automatycznie czyta wysłane fejki, mierzy "Jednostki pokonane w ataku" przed/po wejściu każdego i szacuje obronę we wrogich wioskach
+// @version      2.2
+// @description  Automatycznie czyta wysłane fejki, mierzy "Jednostki pokonane w ataku" przed/po wejściu każdego i szacuje obronę (z raportu: szczęście, morale, mur, bonusy, skład ataku)
 // @author       Roker
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/skaner-defa-offem.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/skaner-defa-offem.user.js
@@ -10,8 +10,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-defa-offem']={v:'2.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
-
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-defa-offem']={v:'2.2',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 (function () {
   'use strict';
@@ -30,10 +29,20 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
   // obrona: pop, [ogólna, vs kawaleria, vs łucznicy]
   const DEF = {
     spear:  { pop: 1, d: [15, 45, 20] },
+    sword:  { pop: 1, d: [50, 25, 40] },
     archer: { pop: 1, d: [50, 40, 5] },
     heavy:  { pop: 6, d: [200, 80, 180] },
   };
-  const ATT = { axe: { a: 40, t: 0 }, light: { a: 130, t: 1 }, marcher: { a: 120, t: 2 } };
+  // atak: wartość ataku, typ obrony (0 ogólna, 1 kawaleria, 2 łucznicy)
+  const ATT = {
+    axe:      { a: 40,  t: 0 },
+    light:    { a: 130, t: 1 },
+    marcher:  { a: 120, t: 2 },
+    heavy:    { a: 150, t: 1 },
+    ram:      { a: 2,   t: 0 },
+    catapult: { a: 100, t: 0 },
+  };
+  const ATT_KEYS = Object.keys(ATT);
 
   const vid = () => (window.game_data && game_data.village && game_data.village.id) || q.get('village');
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -52,44 +61,73 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
   }
 
   // ---------- model bitwy ----------
-  function model(att, mix, wall, luck, morale) {
-    let A0 = 0, w = [0, 0, 0];
-    for (const k in ATT) { const v = (att[k] || 0) * ATT[k].a; A0 += v; w[ATT[k].t] += v; }
+  // b = { att:{axe,light,marcher,heavy w %}, def:{spear,sword,archer,heavy,flag w %}, wallEff w % }
+  function model(att, mix, wall, luck, morale, b) {
+    b = b || {};
+    const ab = b.att || {}, db = b.def || {};
+    let A0 = 0;
+    const w = [0, 0, 0];
+    for (const k of ATT_KEYS) {
+      const v = (att[k] || 0) * ATT[k].a * (1 + (ab[k] || 0) / 100);
+      A0 += v; w[ATT[k].t] += v;
+    }
     if (!A0) return null;
-    const tot = (mix.spear + mix.archer + mix.heavy) || 1;
+    const tot = (mix.spear + mix.sword + mix.archer + mix.heavy) || 1;
     const pp = [0, 0, 0];
     for (const k in DEF) {
       const share = (mix[k] || 0) / tot;
-      for (let i = 0; i < 3; i++) pp[i] += share * (DEF[k].d[i] / DEF[k].pop);
+      const mult = (1 + (db[k] || 0) / 100) * (1 + (db.flag || 0) / 100);
+      for (let i = 0; i < 3; i++) pp[i] += share * (DEF[k].d[i] / DEF[k].pop) * mult;
     }
     const c = (w[0] * pp[0] + w[1] * pp[1] + w[2] * pp[2]) / A0;
-    return { A: A0 * (1 + luck) * ((morale || 100) / 100), c, W: Math.pow(WALL_BASE, wall) };
+    const W = 1 + (Math.pow(WALL_BASE, wall) - 1) * (1 + (b.wallEff || 0) / 100);
+    return { A: A0 * (1 + luck) * ((morale || 100) / 100), c, W };
   }
+  // K = pokonani obrońcy; zwraca szacunek wielkości obrony (pop)
   function solve(K, m) {
     if (!m || K <= 0) return null;
-    const n0 = Math.max(0, (m.A - 20) / (m.c * m.W));
-    if (K >= n0) return { n: Math.round(K), win: true };
+    const n0 = Math.max(0, (m.A - 20) / (m.c * m.W)); // remis: atak = obrona
+    if (K >= n0) return { n: Math.round(K), win: true, n0: Math.round(n0) };
     const f = (n) => n * Math.pow(m.A / (n * m.c * m.W + 20), 1.5);
     let lo = n0, hi = Math.max(n0 * 2, 10), it = 0;
     while (f(hi) > K && it++ < 80) hi *= 2;
     for (let i = 0; i < 100; i++) { const mid = (lo + hi) / 2; if (f(mid) > K) lo = mid; else hi = mid; }
-    return { n: Math.round((lo + hi) / 2), win: false };
+    return { n: Math.round((lo + hi) / 2), win: false, n0: Math.round(n0) };
   }
-  function fmt(r) {
-    return r ? r.n.toLocaleString('pl-PL') + ' pop (' + (r.n / FARM).toFixed(2) + ' zagr.)' + (r.win ? '*' : '') : '–';
+  function fmt(r, K) {
+    if (!r) return '–';
+    if (r.win) {
+      // atak bliski remisu albo wygrany: pokonani ≈ cała obrona (obrona rzadko > 1,25 K, gdy atak przegrał o włos)
+      const hi = Math.round(K * 1.25);
+      return K.toLocaleString('pl-PL') + '–' + hi.toLocaleString('pl-PL') + ' pop (' + (K / FARM).toFixed(2) + '–' + (hi / FARM).toFixed(2) + ' zagr.) – atak bliski remisu';
+    }
+    return r.n.toLocaleString('pl-PL') + ' pop (' + (r.n / FARM).toFixed(2) + ' zagr.)';
   }
   function estimateRows(K, att, mix, wall, rep) {
+    const b = rep ? rep.bonus : null;
+    const mor = rep && rep.morale ? rep.morale : 100;
+    const w = rep && rep.wall != null ? rep.wall : wall;
     let s;
     if (rep && rep.luck != null) {
-      const w = rep.wall != null ? rep.wall : wall;
-      const r = solve(K, model(att, mix, w, rep.luck, rep.morale));
-      s = 'szczęście ' + (rep.luck * 100).toFixed(1) + '%' + (rep.morale ? ', morale ' + rep.morale + '%' : '') +
-        (rep.wall != null ? ', mur ' + rep.wall : '') + ': <b>' + fmt(r) + '</b>';
+      const r = solve(K, model(att, mix, w, rep.luck, mor, b));
+      s = 'szczęście ' + (rep.luck * 100).toFixed(1) + '%, morale ' + mor + '%, mur ' + w + ': <b>' + fmt(r, K) + '</b>';
     } else {
-      s = [['-20%', -0.2], ['0%', 0], ['+20%', 0.2]].map(([lbl, luck]) => lbl + ': ' + fmt(solve(K, model(att, mix, wall, luck, 100)))).join(' | ');
+      s = [['-20%', -0.2], ['0%', 0], ['+20%', 0.2]].map(([lbl, luck]) =>
+        lbl + ': ' + fmt(solve(K, model(att, mix, w, luck, mor, b)), K)).join(' | ');
     }
+    if (rep && rep.attAllDied) s += '<br><i>atak zginął w całości (obrona silniejsza od ataku)</i>';
     if (rep && rep.defPop != null) s += '<br><b>Z raportu: obrona przed bitwą ' + rep.defPop.toLocaleString('pl-PL') + ' pop (' + (rep.defPop / FARM).toFixed(2) + ' zagr.)</b>';
     return s;
+  }
+  function compText(a) {
+    const p = [];
+    if (a.axe) p.push(a.axe + ' top.');
+    if (a.light) p.push(a.light + ' LK');
+    if (a.marcher) p.push(a.marcher + ' ŁnK');
+    if (a.heavy) p.push(a.heavy + ' CK');
+    if (a.ram) p.push(a.ram + ' tar.');
+    if (a.catapult) p.push(a.catapult + ' kat.');
+    return p.join(' + ') || '?';
   }
 
   // ---------- raporty ----------
@@ -105,6 +143,78 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
     });
     return out;
   }
+  function sumBonus(text, nameRe, kindsRe) {
+    const re = new RegExp(nameRe + ':\\s*\\+(\\d+)%\\s*siła\\s*(?:' + kindsRe + ')', 'gi');
+    let m, s = 0;
+    while ((m = re.exec(text))) s += +m[1];
+    return s;
+  }
+  function unitSeries(htmlPart) {
+    // zwraca { jednostka: [ilość, straty] } — pierwsza seria to ilość, druga to straty
+    const res = {};
+    const re = /unit-item-(\w+)[^>]*>\s*(\d+)/g;
+    let m;
+    while ((m = re.exec(htmlPart))) {
+      (res[m[1]] = res[m[1]] || []).push(+m[2]);
+    }
+    return res;
+  }
+  function parseReport(html) {
+    const txt = html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+    const info = { luck: null, morale: null, wall: null, defPop: null, att: null, attAllDied: false, bonus: { att: {}, def: {}, wallEff: 0 } };
+    const lm = txt.match(/Szczęście[^%]{0,200}?(-?\d+(?:[.,]\d+)?)\s*%/i);
+    if (lm) info.luck = parseFloat(lm[1].replace(',', '.')) / 100;
+    const mm = txt.match(/Morale:?\s*(\d+)\s*%/i);
+    if (mm) info.morale = +mm[1];
+    // mur: poziom PRZED taranami (bitwa toczy się z pełnym murem)
+    const wm = txt.match(/Mur uszkodzony z poziomu\s*(\d+)/i) || txt.match(/Mur\s*\(Poziom\s*(\d+)\)/i);
+    if (wm) info.wall = +wm[1];
+
+    const ia = txt.search(/Agresor/i), id = txt.search(/Obrońca/i);
+    const attTxt = ia >= 0 && id > ia ? txt.slice(ia, id) : '';
+    const defTxt = id >= 0 ? txt.slice(id) : '';
+    const ATTK = 'w ataku i w obronie|w ataku|napadu';
+    const DEFK = 'w ataku i w obronie|obrony';
+    info.bonus.att = {
+      axe: sumBonus(attTxt, 'Topornik', ATTK),
+      light: sumBonus(attTxt, 'Lekki kawalerzysta', ATTK),
+      marcher: sumBonus(attTxt, 'Łucznik na koniu', ATTK),
+      heavy: sumBonus(attTxt, 'Ciężki kawalerzysta', ATTK),
+    };
+    info.bonus.def = {
+      spear: sumBonus(defTxt, 'Pikinier', DEFK),
+      sword: sumBonus(defTxt, 'Miecznik', DEFK),
+      archer: sumBonus(defTxt, 'Łucznik(?! na koniu)', DEFK),
+      heavy: sumBonus(defTxt, 'Ciężki kawalerzysta', DEFK),
+      flag: 0,
+    };
+    const fm = defTxt.match(/Flaga:\s*\+(\d+)%\s*siła obrony/i);
+    if (fm) info.bonus.def.flag = +fm[1];
+    const em = defTxt.match(/\+(\d+)%\s*efektywność muru/i);
+    if (em) info.bonus.wallEff = +em[1];
+
+    // skład ataku i straty
+    const ha = html.search(/Agresor/i), hd = html.search(/Obrońca/i);
+    if (ha >= 0 && hd > ha) {
+      const ser = unitSeries(html.slice(ha, hd));
+      const att = {};
+      let cnt = 0, lost = 0;
+      for (const k in ser) {
+        const n = ser[k][0] || 0, l = ser[k][1] || 0;
+        if (ATT[k]) att[k] = n;
+        if (k !== 'spy' && k !== 'knight') { cnt += n; lost += l; }
+      }
+      if (cnt > 0) { info.att = att; info.attAllDied = lost >= 0.98 * cnt; }
+    }
+    // obrona przed bitwą (tylko gdy raport ją pokazuje)
+    if (hd >= 0) {
+      const ser = unitSeries(html.slice(hd));
+      let sum = 0, found = false;
+      for (const k in ser) { found = true; sum += (ser[k][0] || 0) * (POP[k] != null ? POP[k] : 1); }
+      if (found && sum > 0) info.defPop = sum;
+    }
+    return info;
+  }
   async function fetchReportInfo(coord, seen) {
     for (let tries = 0; tries < 4; tries++) {
       try {
@@ -113,26 +223,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
         if (rep) {
           seen.add(rep.id);
           const html = await (await fetch('/game.php?village=' + vid() + '&screen=report&view=' + rep.id, { credentials: 'same-origin' })).text();
-          const info = { luck: null, morale: null, wall: null, defPop: null, id: rep.id };
-          const lm = html.match(/Szczęście[\s\S]{0,400}?(-?\d+(?:[.,]\d+)?)\s*%/i);
-          if (lm) info.luck = parseFloat(lm[1].replace(',', '.')) / 100;
-          const mm = html.match(/Morale:?\s*(?:<[^>]*>\s*)*(\d+)\s*%/i);
-          if (mm) info.morale = +mm[1];
-          const wm = html.match(/Mur\s*\(Poziom\s*(\d+)\)/i);
-          if (wm) info.wall = +wm[1];
-          const di = html.search(/Obrońca/i);
-          if (di >= 0) {
-            const seenU = {};
-            const re = /unit-item-(\w+)[^>]*>\s*(\d+)/g;
-            const part = html.slice(di);
-            let m, sum = 0, found = false;
-            while ((m = re.exec(part))) {
-              if (seenU[m[1]]) continue; // druga seria to straty
-              seenU[m[1]] = true; found = true;
-              sum += (+m[2]) * (POP[m[1]] != null ? POP[m[1]] : 1);
-            }
-            if (found && sum > 0) info.defPop = sum;
-          }
+          const info = parseReport(html);
+          info.id = rep.id;
           return info;
         }
       } catch (e) {}
@@ -195,7 +287,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
         const re = /unit-item-(\w+)[^>]*>\s*(\d+)/g;
         let m;
         while ((m = re.exec(html))) units[m[1]] = +m[2];
-        if (arrival) out.push({ id: c.id, coord: c.coord, arrival, att: { axe: units.axe || 0, light: units.light || 0, marcher: units.marcher || 0 }, units });
+        const att = {};
+        ATT_KEYS.forEach((k) => { att[k] = units[k] || 0; });
+        if (arrival) out.push({ id: c.id, coord: c.coord, arrival, att, units });
       } catch (e) {}
       await sleep(250);
     }
@@ -204,25 +298,26 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
 
   // ---------- UI ----------
   const box = document.createElement('div');
-  box.style.cssText = 'margin:8px 0;padding:8px;border:2px solid #7d510f;background:#f4e4bc;font-size:13px;max-width:640px';
+  box.style.cssText = 'margin:8px 0;padding:8px;border:2px solid #7d510f;background:#f4e4bc;font-size:13px;max-width:700px';
   box.innerHTML = `
     <b>Skaner defa offem – tryb auto</b>
     <div style="margin:4px 0">Mur <input id="sd_wall" type="number" value="20" min="0" max="20" style="width:40px">
       Obrona (% pop): włócznik <input id="sd_sp" type="number" value="50" style="width:40px">
+      miecznik <input id="sd_sw" type="number" value="0" style="width:40px">
       łucznik <input id="sd_ar" type="number" value="50" style="width:40px">
       CK <input id="sd_hv" type="number" value="0" style="width:40px"></div>
     <div style="margin:6px 0">
       <button class="btn" id="sd_go" style="padding:8px 12px">Skanuj wysłane fejki</button>
       <button class="btn" id="sd_stop" style="padding:8px 12px">Stop</button>
     </div>
-    <div id="sd_status" style="margin:4px 0">Wyślij fejki, zostaw tę kartę otwartą i kliknij „Skanuj".</div>
+    <div id="sd_status" style="margin:4px 0">Wyślij fejki, zostaw tę kartę otwartą i kliknij „Skanuj". Mur i bonusy obrony skrypt weźmie z raportu, a pola wyżej to założenia do czasu raportu.</div>
     <div id="sd_out"></div>`;
   const target = isCommands ? (document.querySelector('#content_value h3, #content_value h2') || document.querySelector('#content_value')) : (document.querySelector('#content_value h2') || document.querySelector('#content_value'));
   target.parentNode.insertBefore(box, target.nextSibling);
   const $ = (id) => box.querySelector('#' + id);
   const status = (t) => { $('sd_status').innerHTML = t; };
   const cfg = () => ({
-    mix: { spear: +$('sd_sp').value || 0, archer: +$('sd_ar').value || 0, heavy: +$('sd_hv').value || 0 },
+    mix: { spear: +$('sd_sp').value || 0, sword: +$('sd_sw').value || 0, archer: +$('sd_ar').value || 0, heavy: +$('sd_hv').value || 0 },
     wall: Math.min(20, Math.max(0, +$('sd_wall').value || 0)),
   });
 
@@ -242,7 +337,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
     running = true;
     const cmds = await loadAttackCommands((t) => status(t));
     if (!cmds.length) { status('Brak rozkazów ataku z odczytanym czasem przybycia (sprawdź filtr „Ataki" w rozkazach).'); running = false; return; }
-    const nofull = cmds.filter((c) => !c.att.axe && !c.att.light && !c.att.marcher).length;
+    const nofull = cmds.filter((c) => !ATT_KEYS.some((k) => c.att[k])).length;
     status('Załadowano ' + cmds.length + ' fejków' + (nofull ? ' (' + nofull + ' bez odczytanego składu)' : '') + '. Nasłuchuję — nie zamykaj tej karty.');
 
     let lastScore = null, lastTs = null;
@@ -252,9 +347,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
     try { (await fetchReportList()).forEach((r) => seenReports.add(r.id)); } catch (e) {}
 
     const render = () => {
-      $('sd_out').innerHTML = '<table class="vis" style="width:100%"><tr><th>Cel</th><th>Skład fejka</th><th>Pokonane</th><th>Szacunek obrony</th></tr>' +
+      $('sd_out').innerHTML = '<table class="vis" style="width:100%"><tr><th>Cel</th><th>Skład ataku</th><th>Pokonane</th><th>Szacunek obrony</th></tr>' +
         results.map((r) => '<tr><td>' + r.coords + '</td><td>' + r.comp + '</td><td>' + r.K + (r.amb ? ' (suma, ' + r.n + ' wejść naraz)' : '') + '</td><td>' + r.est + '</td></tr>').join('') +
-        '</table><div style="font-size:11px;margin-top:4px">* = fejk mógł wygrać, więc to ok. cała obrona w wiosce. Dla wejść „naraz" nie da się rozdzielić wyniku — szacunek jest dla sumy i tylko orientacyjny.</div>';
+        '</table><div style="font-size:11px;margin-top:4px">„atak bliski remisu” = pokonane ≈ cała obrona (obrona zwykle K do 1,25×K). Przy małym K (poniżej ok. 20) szacunek jest zgrubny, bo K jest całkowite. Dla wejść „naraz” nie da się rozdzielić wyniku — szacunek jest orientacyjny.</div>';
     };
 
     while (running) {
@@ -279,12 +374,13 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
           const K = s - lastScore;
           if (hit.length) {
             const { mix, wall } = cfg();
-            const att = { axe: 0, light: 0, marcher: 0 };
-            hit.forEach((c) => { att.axe += c.att.axe; att.light += c.att.light; att.marcher += c.att.marcher; });
-            if (!att.axe && !att.light && !att.marcher) { att.axe = 100; att.light = 50; }
+            const att = {};
+            ATT_KEYS.forEach((k) => { att[k] = 0; });
+            hit.forEach((c) => ATT_KEYS.forEach((k) => { att[k] += c.att[k] || 0; }));
+            if (!ATT_KEYS.some((k) => att[k])) { att.axe = 100; att.light = 50; }
             const row = {
               coords: hit.map((c) => c.coord).join(', '),
-              comp: att.axe + ' top. + ' + att.light + ' LK' + (att.marcher ? ' + ' + att.marcher + ' CK łucz.' : ''),
+              comp: compText(att),
               K, n: hit.length, amb: hit.length > 1,
               est: estimateRows(K, att, mix, wall, null) + '<br><i>czekam na raport...</i>',
             };
@@ -294,7 +390,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
             if (hit.length === 1) {
               // raport pobieramy w tle, żeby nie blokować pomiaru kolejnych fejków
               fetchReportInfo(hit[0].coord, seenReports).then((rep) => {
-                row.est = estimateRows(K, att, mix, wall, rep) + (rep ? '' : '<br><i>brak raportu (np. wszystko zginęło) — szacunek bez znanego szczęścia</i>');
+                const a2 = rep && rep.att ? Object.assign({}, att, rep.att) : att;
+                if (rep && rep.att) row.comp = compText(a2);
+                row.est = estimateRows(K, a2, mix, wall, rep) + (rep ? '' : '<br><i>brak raportu — szacunek bez znanego szczęścia, morale i muru</i>');
                 render();
               });
             }
@@ -304,7 +402,23 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
           pending.forEach((c) => {
             if (c.arrival < ts - 1500 && c.arrival > (lastTs || 0) - 3000) {
               done.add(c.id);
-              results.push({ coords: c.coord, comp: c.att.axe + ' top. + ' + c.att.light + ' LK', K: 0, n: 1, amb: false, est: 'brak strat obrony (0 pokonanych)' });
+              const row = { coords: c.coord, comp: compText(c.att), K: 0, n: 1, amb: false, est: 'K = 0 — obrona poza zasięgiem tego ataku (albo pusta wioska, albo niskie morale). Czekam na raport...' };
+              results.push(row);
+              const { mix, wall } = cfg();
+              fetchReportInfo(c.coord, seenReports).then((rep) => {
+                if (!rep) return;
+                const mor = rep.morale || 100, w = rep.wall != null ? rep.wall : wall;
+                const a2 = rep.att ? Object.assign({}, c.att, rep.att) : c.att;
+                const m = model(a2, mix, w, rep.luck || 0, mor, rep.bonus);
+                // K < 0,5 => obrona co najmniej: (A^1,5 / (c·W)^1,5 / 0,5)^2
+                let lowerBound = null;
+                if (m) lowerBound = Math.round(Math.pow(Math.pow(m.A, 1.5) / (Math.pow(m.c * m.W, 1.5) * 0.5), 2));
+                row.comp = compText(a2);
+                row.est = 'K = 0: obrona co najmniej ok. ' + (lowerBound != null ? lowerBound.toLocaleString('pl-PL') + ' pop (' + (lowerBound / FARM).toFixed(2) + ' zagr.)' : '?') +
+                  ' (szczęście ' + ((rep.luck || 0) * 100).toFixed(1) + '%, morale ' + mor + '%, mur ' + w + ')' +
+                  (mor < 70 ? '<br><i>niskie morale osłabiło atak — zeskanuj większym atakiem albo od gracza o podobnych punktach</i>' : '');
+                render();
+              });
             }
           });
           render();
