@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Skaner defa offem (auto)
 // @namespace    plemiona-roker
-// @version      2.3
+// @version      2.4
 // @description  Automatycznie czyta wysłane fejki, mierzy "Jednostki pokonane w ataku" przed/po wejściu każdego i szacuje obronę (z raportu: szczęście, morale, mur, bonusy, skład ataku)
 // @author       Roker
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/skaner-defa-offem.user.js
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-defa-offem']={v:'2.3',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-defa-offem']={v:'2.4',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 (function () {
   'use strict';
@@ -380,7 +380,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['skaner-d
         lastScore = null;
         const next = pending[0].arrival - PRE_MS;
         const wait = Math.max(POLL_MS, Math.min(next - t, 2000));
-        status('Fejków do zmierzenia: ' + pending.length + '. Najbliższy za ' + Math.max(0, Math.round((pending[0].arrival - t) / 1000)) + ' s. Wyników: ' + results.length);
+        status('Fejków do zmierzenia: ' + pending.length + '. Najbliższy o <b>' + new Date(pending[0].arrival).toISOString().substr(11, 8) + '</b> (za ' + Math.max(0, Math.round((pending[0].arrival - t) / 1000)) + ' s). Wynik w Dzienne przy starcie: <b>' + probe + '</b>. Pomiar ruszy ' + (PRE_MS / 1000) + ' s przed wejściem. Wyników: ' + results.length);
         await sleep(wait);
         continue;
       }
