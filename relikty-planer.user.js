@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relikty – planer rozmieszczenia
 // @namespace    plemiona-roker
-// @version      1.12.0
+// @version      1.13.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @description  Podpowiada, gdzie założyć relikty zależnie od celu: atak, obrona albo szybsza rekrutacja w wybranej grupie wiosek
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.12.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.13.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 (function () {
@@ -149,13 +149,15 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
     doc.querySelectorAll('#production_table tr').forEach((tr) => {
       const v = villageFromCell(tr);
       if (!v) return;
-      let pop = null, max = null;
+      let pop = null, max = null, points = null;
       tr.querySelectorAll('td').forEach((td) => {
+        const pm = points === null && !td.querySelector('a') && td.textContent.trim().match(/^\d{1,3}(?:\.\d{3})*$/);
+        if (pm) points = +td.textContent.trim().replace(/\./g, '');
         if (pop !== null || td.querySelector('a')) return;
         const m = td.textContent.trim().match(/^(\d+)\s*\/\s*(\d+)$/);
         if (m && +m[2] >= 240) { pop = +m[1]; max = +m[2]; }
       });
-      v.pop = pop; v.popMax = max;
+      v.pop = pop; v.popMax = max; v.points = points;
       out.push(v);
     });
     return out;
@@ -222,6 +224,10 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
     const coef = new Float64Array(N * K);
     const weight = new Float64Array(N);
     const targets = new Uint8Array(N);
+    // średnia wielkość (punkty) wiosek docelowych – do preferowania największych wiosek przy rekrutacji
+    const ptsList = vills.filter((v) => S.targetIds.has(v.id) && v.points > 0).map((v) => v.points);
+    const avgPts = ptsList.length ? ptsList.reduce((a, b) => a + b, 0) / ptsList.length : 0;
+    const sizePow = S.sizePow != null ? S.sizePow : 0;
     vills.forEach((v, i) => {
       const on = S.targetIds.has(v.id);
       targets[i] = on ? 1 : 0;
@@ -230,7 +236,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       if (S.mode === 'rec') {
         const free = v.popMax != null ? Math.max(0, v.popMax - v.pop) : 0;
         v.free = free;
-        const f = free >= S.minFree ? Math.min(free, S.freeCap) / 1000 : 0;
+        const sizeF = avgPts && v.points > 0 && sizePow ? Math.pow(v.points / avgPts, sizePow) : 1;
+        const f = free >= S.minFree ? (Math.min(free, S.freeCap) / 1000) * sizeF : 0;
         weight[i] = free;
         if (on) keys.forEach((k, ki) => { coef[i * K + ki] = prio * f; });
       } else if (un) {
@@ -923,6 +930,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       reuseFlags: saved.reuseFlags !== false,
       useRelics: saved.useRelics !== false,
       flagMinGain: saved.flagMinGain != null ? saved.flagMinGain : 4,
+      sizePow: saved.sizePow != null ? saved.sizePow : 1,
       checkCd: saved.checkCd !== false,
       prio: saved.prio || {},
       offVill: new Set(saved.offVill || []),   // ręcznie odznaczone wioski
@@ -933,7 +941,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
 
     const persist = () => saveSettings({
       mode: S.mode, group: S.group, regex: S.regex, slots: S.slots, cap: S.cap, minFree: S.minFree, freeCap: S.freeCap,
-      build: S.build, ignoreCd: S.ignoreCd, lockedSlot: S.lockedSlot, useFlags: S.useFlags, reuseFlags: S.reuseFlags, useRelics: S.useRelics, flagMinGain: S.flagMinGain, checkCd: S.checkCd, prio: S.prio,
+      build: S.build, ignoreCd: S.ignoreCd, lockedSlot: S.lockedSlot, useFlags: S.useFlags, reuseFlags: S.reuseFlags, useRelics: S.useRelics, flagMinGain: S.flagMinGain, sizePow: S.sizePow, checkCd: S.checkCd, prio: S.prio,
       offVill: Array.from(S.offVill), offRelic: Array.from(S.offRelic),
     });
 
@@ -1048,6 +1056,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
           <label><input type="checkbox" data-b="stable" ${S.build.stable ? 'checked' : ''}> stajnia</label>
           <label><input type="checkbox" data-b="garage" ${S.build.garage ? 'checked' : ''}> warsztat</label>
           <label>Min. wolnej zagrody: <input type="number" id="rp-minfree" min="0" step="100" value="${S.minFree}"></label>
+          <label>Wpływ wielkości wioski: <input type="number" id="rp-sizepow" min="0" max="3" step="0.5" value="${S.sizePow}" style="width:50px"> (0 = ignoruj, 1 = waga proporcjonalna do punktów, 2 = mocniej faworyzuj największe)</label>
           <label>Pełna waga od: <input type="number" id="rp-freecap" min="1000" step="1000" value="${S.freeCap}"> wolnych miejsc</label>
         </div><div class="rp-muted">Wioska z mniejszą wolną zagrodą dostaje wagę 0 (nie wykorzysta przyspieszenia). Waga rośnie liniowo z liczbą wolnych miejsc (czyli im mniej wojska w wiosce, tym większy priorytet) aż do ${S.freeCap.toLocaleString('pl-PL')}. Wyższy próg = większa przewaga dla wiosek prawie pustych (np. offów po stratach).</div>` : `<div class="rp-muted">Waga wioski = liczba jednostek × ich siła ${S.mode === 'att' ? 'ataku (razem, wraz z jednostkami w drodze)' : 'obrony (w wiosce)'}. Bonus jest liczony osobno dla każdego typu jednostki.</div>`}
 
@@ -1108,6 +1117,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       q('#rp-userel').onchange = (e) => { S.useRelics = e.target.checked; persist(); };
       q('#rp-lslot').onchange = (e) => { S.lockedSlot = e.target.checked; persist(); };
       q('#rp-cd').onchange = (e) => { S.ignoreCd = e.target.checked; persist(); render(); };
+      const sp = q('#rp-sizepow');
+      if (sp) sp.onchange = (e) => { S.sizePow = Math.min(3, Math.max(0, num(e.target.value))); persist(); render(); };
       const fc = q('#rp-freecap');
       if (fc) fc.onchange = (e) => { S.freeCap = Math.max(1000, intOf(e.target.value)); persist(); render(); };
       const mf = q('#rp-minfree');
