@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Plemiona – Strażnik planu ataku
 // @namespace    dawid.plemiona
-// @version      1.25
+// @version      1.29
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js
 // @description  Pływający panel z planem ataku: odliczanie do otwarcia/zamknięcia okna wysyłki, alarm dźwiękowy + powiadomienie, licznik w tytule karty, auto-odhaczanie po wysłaniu, podpowiedź celu katapult (spichlerz/zagroda). Import planu przez wklejenie BBCode (format tabelaryczny i lista "Wyślij FEJK/OFF/BURZAK"). Nie klika za Ciebie.
