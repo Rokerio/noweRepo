@@ -18,7 +18,7 @@ Skrypty do Tampermonkey / Violentmonkey. Kliknij link **Instaluj** – przegląd
 | Plemiona – Plemienny Poker podpowiedź | 1.5 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-poker-podpowiedz.user.js) |
 | Plemiona – Relikty i flagi: planer rozmieszczenia (rekrutacja / atak / obrona) | 1.15.0 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js) |
 | Plemiona – Skaner defa offem (Dzienne + raporty) | 2.4 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/skaner-defa-offem.user.js) |
-| Plemiona – Strażnik planu ataku | 1.28 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js) |
+| Plemiona – Strażnik planu ataku | 1.29 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/straznik-planu-ataku.user.js) |
 | Plemiona – Zrzut źródła strony (do wklejenia Claude) | 1.1 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plemiona-zrzut-zrodla.user.js) |
 | Masowy Zbierak API (Plemiona) | 7.6 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/zbierak-api.user.js) |
 | Plemiona – Sprawdzacz skryptów (README vs to urządzenie) | 1.0.0 | [Instaluj](https://raw.githubusercontent.com/Rokerio/noweRepo/main/sprawdzacz-skryptow.user.js) |
@@ -30,3 +30,7 @@ Zainstaluj **Sprawdzacz skryptów** – przycisk 🔎 w rogu gry porównuje tę 
 ## Aktualizacja
 
 Po zmianie skryptu podbij `@version` w nagłówku i wrzuć na `main`. Tampermonkey sprawdza aktualizacje wg własnego harmonogramu (Ustawienia → Sprawdzaj aktualizacje), a ręcznie: Narzędzia → Sprawdź aktualizacje.
+
+## Plany (BBCode do wklejenia w Strażniku)
+
+- [Plan na 20.11.2026 – wejście 17:00 (OFF) i 17:01 (szlachcice), 39 ataków](https://raw.githubusercontent.com/Rokerio/noweRepo/main/plan-2026-11-20.txt)

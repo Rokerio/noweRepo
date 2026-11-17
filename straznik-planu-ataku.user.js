@@ -10,7 +10,7 @@
 // @run-at       document-idle
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.28',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik-planu-ataku']={v:'1.29',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 /* global game_data, Timing, UI */
@@ -24,7 +24,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   //  DOMYŚLNY PLAN (pl233, wejście 01.10 08:00–12:00)
   // =====================================================================
   const DEFAULT_WORLD = 'pl233';
-  const VER = '1.28';
+  const VER = '1.29';
   const PLAN_VER = 'all-29.10';
   const DEFAULT_PLAN = [
     { id: 1, type: 'Burzak', vil: 13391, tgt: 11488, units: 0, note: '25k na Kuźnia', from: '617|539', to: '422|583', start: '2026-10-29 05:02:56', end: '2026-10-29 09:02:56' },
@@ -446,7 +446,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   }
   function villLine(a) {
     const vi = villInfo(a); if (!vi) return '';
-    const big = a.type === 'OFF' || a.type === 'Burzak';
+    const big = isOffT(a.type) || a.type === 'Burzak';
     const fl = vi.flag != null ? `<span style="color:#1a7a1a">🚩 +${vi.flag}% atak</span>` : `<span style="color:${big ? '#c40f00' : '#888'}"><b>🚩 brak flagi ataku</b>${vi.other ? ' (jest: ' + vi.other + ')' : ''}</span>`;
     const rl = vi.rel.length ? `<span style="color:#1a7a1a">🏺 ${vi.rel.slice(0, 4).map(x => x.u + ' +' + Math.round(x.v * 10) / 10 + '%').join(', ')}${vi.rel.length > 4 ? ' …' : ''}</span>` : `<span style="color:${big ? '#c40f00' : '#888'}">🏺 brak reliktów ataku</span>`;
     return `<br><small>${fl} · ${rl}</small>`;
@@ -454,7 +454,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
   // duże ataki (OFF), które już wyszły z wioski – odliczanie do wejścia
   function landingHtml(n) {
     const L = store.land || {};
-    const l = store.plan.filter(a => a.type === 'OFF' && store.done[a.id] && L[a.id] && L[a.id] > n - 30000).sort((x, y) => L[x.id] - L[y.id]).slice(0, 6);
+    const l = store.plan.filter(a => isOffT(a.type) && store.done[a.id] && L[a.id] && L[a.id] > n - 30000).sort((x, y) => L[x.id] - L[y.id]).slice(0, 6);
     if (!l.length) return '';
     return `<div class="pa-ft" style="background:#fbe9c0"><b>🛬 Duże ataki w drodze:</b>` + l.map(a => { const left = L[a.id] - n; return `<br>#${a.id} OFF ${a.from} → ${a.to}: <b style="color:${left < 300000 ? '#c40f00' : '#333'}">${left > 0 ? 'wchodzi za ' + fmtLeft(left) : 'właśnie wchodzi'}</b> (${hm(L[a.id])})`; }).join('') + '</div>';
   }
@@ -484,7 +484,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     const pending = store.plan.filter(a => mine(a) && !store.done[a.id] && n <= toMs(a.end));
     const openNow = pending.filter(a => n >= toMs(a.start));
     const head = `<div class="pa-hd" id="pa-toggle">⚔️ Plan ataku <span>${openNow.length ? '🟢 ' + openNow.length + ' do wysłania' : pending.length + ' w kolejce'} ${store.collapsed ? '▲' : '▼'}</span></div>`;
-    const nearBig = store.plan.filter(a => a.type === 'OFF' && store.done[a.id] && store.land && store.land[a.id] > n && store.land[a.id] - n < 15 * 60000).length;
+    const nearBig = store.plan.filter(a => isOffT(a.type) && store.done[a.id] && store.land && store.land[a.id] > n && store.land[a.id] - n < 15 * 60000).length;
     const head2 = head.replace('</span></div>', (nearBig ? ' · 🛬' + nearBig : '') + '</span></div>');
     if (store.collapsed) { panel.innerHTML = head2; return; }
     const SOON = 10 * 60000;
@@ -609,6 +609,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
 
   // Uzupełnianie formularza placu (nie klika "Wyślij" – to zostaje po Twojej stronie)
   const UNITS_OFF = ['axe', 'light', 'marcher', 'ram', 'catapult'];
+  const isOffT = t => /^off/i.test(t || '');   // OFF i OFF+SZL
   const POP = { spear: 1, sword: 1, axe: 1, archer: 1, spy: 2, light: 4, marcher: 5, heavy: 6, ram: 5, catapult: 8, knight: 10, snob: 100 };
   function setVal(inp, v) {
     inp.value = v;
@@ -653,7 +654,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     const spies = () => { const sp = avail('spy'); if (sp) plan.spy = Math.min(sp, 10); };  // 5–10 zwiadu
     const cnt = +a.units || +((a.note.match(/(\d+)\s*off/i) || [])[1]) || (a.type === 'Fejk' ? 100 : 0);
     const cats = +((a.note.match(/(\d+)\s*k\b/i) || [])[1]) || 0;
-    if (a.type === 'Szlachcic') plan.snob = 1;
+    if (a.type === 'Szlachcic') { if (avail('snob')) plan.snob = 1; if (cnt) fillPieces(cnt); }   // szlachcic + (opcjonalna) eskorta z ofensywnych
     else if (a.type === 'Fejk') {         // łącznie cnt jednostek (z taranem i zwiadem)
       if (avail('ram')) plan.ram = 1;
       spies();
@@ -664,6 +665,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
       fillPieces(Math.max(+a.units || 0, 200) - (plan.spy || 0));   // pusty burzak: min. 200 jednostek
     } else {                              // OFF: cała armia z wioski (tarany + katapulty na cel), bez rycerza i szlachcica
       ['spear', 'sword', 'axe', 'archer', 'spy', 'light', 'marcher', 'heavy', 'ram', 'catapult'].forEach(u => { const c = avail(u); if (c) plan[u] = c; });
+      if (/\+\s*szl/i.test(a.type) && avail('snob')) plan.snob = 1;   // OFF+SZL: cała armia + 1 szlachcic
     }
     return plan;
   }
@@ -689,7 +691,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     const pool = {};
     Object.keys(POP).forEach(u => { pool[u] = avail(u); });
     const n0 = now();
-    const others = store.plan.filter(o => o.id !== a.id && o.vil === a.vil && !store.done[o.id] && n0 <= toMs(o.end) && o.type !== 'OFF')
+    const others = store.plan.filter(o => o.id !== a.id && o.vil === a.vil && !store.done[o.id] && n0 <= toMs(o.end) && !isOffT(o.type))
       .sort((x, y) => toMs(x.end) - toMs(y.end));
     if (a.type !== 'Szlachcic') others.forEach(o => { const r = buildPlan(o, pool); Object.keys(r).forEach(u => { pool[u] = Math.max(0, pool[u] - r[u]); }); });
     const plan = buildPlan(a, pool);
@@ -736,7 +738,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['straznik
     const st = status(a, now());
     const rest = store.plan.filter(o => o.id !== a.id && o.vil === a.vil && !store.done[o.id] && now() <= toMs(o.end));
     box.innerHTML = `⚔️ <b>Plan #${a.id}: ${a.type}</b> ${a.from} → ${a.to}${a.units ? ` · ${a.units} jedn.` : ''}${a.note ? ` · 🎯 ${a.note}` : ''} · <b>${st.txt}</b>` + villLine(a) +
-      (rest.length ? `<br>⚠️ Z tej wioski jeszcze ${rest.length}: ` + rest.map(o => `#${o.id} ${o.type}${o.type === 'OFF' ? ' (full)' : ''} do ${o.end.slice(11, 16)}`).join(', ') + ' – wojsko pod nie zostaje w rezerwie' : '') + `<div id="pa-msg">${fillMsg}</div>`;
+      (rest.length ? `<br>⚠️ Z tej wioski jeszcze ${rest.length}: ` + rest.map(o => `#${o.id} ${o.type}${isOffT(o.type) ? ' (full)' : ''} do ${o.end.slice(11, 16)}`).join(', ') + ' – wojsko pod nie zostaje w rezerwie' : '') + `<div id="pa-msg">${fillMsg}</div>`;
     if (!box.parentElement) {
       const anchor = document.querySelector('#command-data-form') || confirmBtn?.closest('form') || document.getElementById('content_value');
       if (anchor) anchor.parentElement.insertBefore(box, anchor);
