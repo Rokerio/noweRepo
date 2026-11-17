@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relikty – planer rozmieszczenia
 // @namespace    plemiona-roker
-// @version      1.11.1
+// @version      1.12.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @description  Podpowiada, gdzie założyć relikty zależnie od celu: atak, obrona albo szybsza rekrutacja w wybranej grupie wiosek
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.11.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.12.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 (function () {
@@ -316,7 +316,11 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
 
   // Przydział flag: flagi działają osobno od reliktów (bez wspólnego limitu), więc zysk z flagi
   // = jej % × suma współczynników wioski. Największe flagi do wiosek o największej wadze (optymalne).
-  function assignFlags(P, flags, blockedVi) {
+  // Przydział flag: największe flagi → wioski o największej wadze (przy rekrutacji: najwięcej wolnej zagrody),
+  // ale flaga NIE jest ruszana, gdy zmiana daje mniej niż minGain p.p. (np. 8% → 8% albo 6% → 8%),
+  // bo każda zmiana blokuje wioskę na 24 h.
+  function assignFlags(P, flags, blockedVi, minGain) {
+    minGain = minGain || 0;
     const { N, K, coef } = P;
     const w = [];
     for (let vi = 0; vi < N; vi++) {
@@ -326,26 +330,34 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       if (sum > 0) w.push({ vi, sum });
     }
     w.sort((x, y) => y.sum - x.sum);
-    const fl = flags.slice().sort((x, y) => y.pct - x.pct);
-    const n = Math.min(fl.length, w.length);
-    const slots = w.slice(0, n).map((x) => x.vi);
     const sumOf = new Map(w.map((x) => [x.vi, x.sum]));
-    const out = [];
-    // w obrębie tej samej wartości % najpierw zostaw flagi tam, gdzie już wiszą
-    for (let i = 0; i < n;) {
-      let j = i;
-      while (j < n && fl[j].pct === fl[i].pct) j++;
-      const group = fl.slice(i, j), vs = slots.slice(i, j);
-      const left = [], free = vs.slice();
-      group.forEach((f) => {
-        const at = free.indexOf(f.from);
-        if (f.from != null && at >= 0) { out.push({ flag: f, vi: f.from, gain: f.pct * sumOf.get(f.from) }); free.splice(at, 1); }
-        else left.push(f);
+    const cur = new Map(); // vi -> flaga, która tam teraz wisi
+    flags.forEach((f) => { if (f.from != null && P.idxById.has(f.from)) cur.set(P.idxById.get(f.from), f); });
+    const lockedV = new Map(), lockedF = new Set();
+    const matchRank = () => {
+      const fl = flags.filter((f) => !lockedF.has(f)).sort((x, y) => y.pct - x.pct);
+      const vs = w.filter((x) => !lockedV.has(x.vi));
+      const n = Math.min(fl.length, vs.length), m = new Map();
+      for (let i = 0; i < n; i++) m.set(vs[i].vi, fl[i]);
+      return m;
+    };
+    for (let guard = 0; guard < 500; guard++) {
+      const ideal = matchRank();
+      let changed = false;
+      w.forEach((x) => {
+        if (lockedV.has(x.vi)) return;
+        const c = cur.get(x.vi);
+        if (!c || lockedF.has(c)) return;
+        const id = ideal.get(x.vi);
+        const ip = id ? id.pct : 0;
+        if (id && (ip === c.pct || Math.abs(ip - c.pct) < minGain)) { lockedV.set(x.vi, c); lockedF.add(c); changed = true; }
       });
-      left.forEach((f, k) => out.push({ flag: f, vi: free[k], gain: f.pct * sumOf.get(free[k]) }));
-      i = j;
+      if (!changed) break;
     }
-    return out;
+    const out = [];
+    lockedV.forEach((f, vi) => out.push({ flag: f, vi, keep: true, gain: f.pct * sumOf.get(vi) }));
+    matchRank().forEach((f, vi) => out.push({ flag: f, vi, keep: false, gain: f.pct * sumOf.get(vi) }));
+    return out.sort((x, y) => y.flag.pct - x.flag.pct || y.gain - x.gain);
   }
 
   function shuffle(a) {
@@ -909,6 +921,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       lockedSlot: !!saved.lockedSlot,
       useFlags: saved.useFlags !== false,
       reuseFlags: saved.reuseFlags !== false,
+      useRelics: saved.useRelics !== false,
+      flagMinGain: saved.flagMinGain != null ? saved.flagMinGain : 4,
       checkCd: saved.checkCd !== false,
       prio: saved.prio || {},
       offVill: new Set(saved.offVill || []),   // ręcznie odznaczone wioski
@@ -919,7 +933,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
 
     const persist = () => saveSettings({
       mode: S.mode, group: S.group, regex: S.regex, slots: S.slots, cap: S.cap, minFree: S.minFree, freeCap: S.freeCap,
-      build: S.build, ignoreCd: S.ignoreCd, lockedSlot: S.lockedSlot, useFlags: S.useFlags, reuseFlags: S.reuseFlags, checkCd: S.checkCd, prio: S.prio,
+      build: S.build, ignoreCd: S.ignoreCd, lockedSlot: S.lockedSlot, useFlags: S.useFlags, reuseFlags: S.reuseFlags, useRelics: S.useRelics, flagMinGain: S.flagMinGain, checkCd: S.checkCd, prio: S.prio,
       offVill: Array.from(S.offVill), offRelic: Array.from(S.offRelic),
     });
 
@@ -1044,6 +1058,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
 
         <h3>3. Relikty do użycia</h3>
         <div class="rp-muted">Założone: ${eqAll.length} (zablokowane/zdobyte: ${eqLocked}, z cooldownem zdjęcia: ${eqCd}). Odznaczone relikty zostają na miejscu i zajmują slot.</div>
+        <div class="rp-row"><label><input type="checkbox" id="rp-userel" ${S.useRelics ? 'checked' : ''}> planuj relikty (odznacz = <b>tylko flagi</b>)</label></div>
         <div class="rp-row"><label><input type="checkbox" id="rp-lslot" ${S.lockedSlot ? 'checked' : ''}> zablokowane (zdobyte) relikty zajmują slot</label></div>
         <details><summary>Pokaż / odznacz relikty (odznaczone zostają tam, gdzie są)</summary>
           <div class="rp-scroll"><table><tr><th></th><th>Relikt</th><th>Stan</th></tr>${relRows}</table></div>
@@ -1055,6 +1070,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
         <div class="rp-row"><label><input type="checkbox" id="rp-flags" ${S.useFlags ? 'checked' : ''}> uwzględnij nieprzypisane flagi (${esc(flagSummary)})</label></div>
         <div class="rp-row"><label><input type="checkbox" id="rp-cdchk" ${S.checkCd ? 'checked' : ''}> sprawdź blokady 24 h zmiany flag (1 zapytanie na wioskę) – zablokowane wioski zostają bez zmian</label> <span id="rp-cdstatus" class="rp-muted"></span></div>
         <div class="rp-row"><label><input type="checkbox" id="rp-reflags" ${S.reuseFlags ? 'checked' : ''}> uwzględnij też flagi tego typu już przypisane do wiosek (${flagAssigned.length} szt.${flagAssigned.length ? ': ' + flagAssigned.map((a) => '+' + a.pct + '%').join(', ') : ''}) – przeniosę je</label></div>
+        <div class="rp-row"><label>Zmieniaj flagę w wiosce tylko, gdy poprawa ≥ <input type="number" id="rp-fgain" min="0" step="1" value="${S.flagMinGain}" style="width:50px"> p.p. (np. 8%→8% albo 6%→8% zostaje bez zmian, bo zmiana blokuje wioskę na 24 h)</label></div>
         <div class="rp-muted">Flagi działają osobno od reliktów (bez wspólnego limitu), więc trafiają do wiosek o największej wadze. Przeniesienie flagi wymaga jej wycofania (cooldown 24 h).</div>` : '<div class="rp-muted">Tryb: tylko relikty – flagi nie są liczone ani zmieniane.</div>'}
 
         <div class="rp-row" style="margin-top:12px"><button id="rp-run" type="button">Policz najlepsze ustawienie</button></div>
@@ -1086,8 +1102,10 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       if (q('#rp-reflags')) {
         q('#rp-reflags').onchange = (e) => { S.reuseFlags = e.target.checked; persist(); render(); };
         q('#rp-flags').onchange = (e) => { S.useFlags = e.target.checked; persist(); render(); };
+        q('#rp-fgain').onchange = (e) => { S.flagMinGain = Math.max(0, num(e.target.value)); persist(); };
         q('#rp-cdchk').onchange = (e) => { S.checkCd = e.target.checked; persist(); };
       }
+      q('#rp-userel').onchange = (e) => { S.useRelics = e.target.checked; persist(); };
       q('#rp-lslot').onchange = (e) => { S.lockedSlot = e.target.checked; persist(); };
       q('#rp-cd').onchange = (e) => { S.ignoreCd = e.target.checked; persist(); render(); };
       const fc = q('#rp-freecap');
@@ -1128,7 +1146,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       // podział reliktów: pula (do ustawienia) / zablokowane na miejscu
       const pool = [], fixed = [], freed = [];
       data.relics.forEach((r) => {
-        const isFixed = r.locked || r.inactive || (r.cooldown && !S.ignoreCd);
+        const isFixed = !S.useRelics || r.locked || r.inactive || (r.cooldown && !S.ignoreCd);
         const off = S.offRelic.has(r.id);
         if (r.villageId) {
           if (isFixed || off) fixed.push(r);
@@ -1141,7 +1159,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       const fixedHosts = new Set(fixed.map((r) => r.villageId));
       const fixedSlots = fixed.filter((r) => S.lockedSlot || !(r.locked || r.inactive)).length;
       const slotsFree = S.slots - fixedSlots;
-      if (slotsFree <= 0 || !pool.length) {
+      if (S.useRelics && (slotsFree <= 0 || !pool.length)) {
         const cd = fixed.filter((r) => r.cooldown && !r.locked && !r.inactive).length;
         out.innerHTML = `<p class="rp-warn">Brak wolnych slotów lub pasujących reliktów. Pula: ${pool.length}, zajęte sloty przez relikty zostające na miejscu: ${fixedSlots} z ${S.slots} (w tym ${cd} z cooldownem zdjęcia). Zaznacz „ignoruj cooldown zdjęcia”, odznacz niepotrzebne blokady albo zwiększ liczbę slotów.</p>`;
         return;
@@ -1167,10 +1185,12 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       relics.forEach((o, ri) => { if (o.r.villageId && P.idxById.has(o.r.villageId)) currentState.push([ri, P.idxById.get(o.r.villageId)]); });
       const curVal = ev.gain(currentState, relics);
 
-      solve(ctx, slotsFree, (p) => { bar.style.width = p + '%'; }, (res) => {
+      const finishRun = (res) => {
         panel.querySelector('#rp-barwrap').style.display = 'none';
-        showResult(P, ev, relics, res, currentState, curVal, fixed, vById, freed, flags.length ? assignFlags(P, flags, blockedVi) : []);
-      });
+        showResult(P, ev, relics, res, currentState, curVal, fixed, vById, freed, flags.length ? assignFlags(P, flags, blockedVi, S.flagMinGain) : []);
+      };
+      if (!S.useRelics) finishRun({ state: [], value: 0 });
+      else solve(ctx, slotsFree, (p) => { bar.style.width = p + '%'; }, finishRun);
     }
 
     function bonusesOf(P, ev, relics, state) {
@@ -1206,8 +1226,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
         + (gainPct != null ? ` → <span class="${gainPct >= 0 ? 'rp-good' : 'rp-warn'}">${gainPct >= 0 ? '+' : ''}${gainPct}%</span>` : '')
         + `<br><span class="rp-muted">(wartość to suma bonusów ważona wagami wiosek; ma sens tylko do porównań)</span></div>`;
 
-      html += '<table><tr><th>Relikt</th><th>Postaw w wiosce</th><th>Co zrobić</th></tr>';
-      state.forEach(([ri, h]) => {
+      if (S.useRelics) html += '<table><tr><th>Relikt</th><th>Postaw w wiosce</th><th>Co zrobić</th></tr>';
+      if (S.useRelics) state.forEach(([ri, h]) => {
         const o = relics[ri], v = P.vills[h];
         const cur = o.r.villageId;
         let act;
@@ -1217,15 +1237,15 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
         html += `<tr><td>${esc(o.r.name)} <span class="rp-muted">r${o.r.range}</span><br><span class="rp-muted">${esc(relicShort(o.r))}</span></td>
           <td><a href="/game.php?village=${v.id}&screen=relic_system" target="_blank">${esc(v.name)}</a><br><span class="rp-muted">(${v.x}|${v.y})</span></td><td>${act}</td></tr>`;
       });
-      html += '</table>';
+      if (S.useRelics) html += '</table>';
 
       const toRemove = relics.map((o, ri) => ({ o, ri })).filter(({ o, ri }) => o.r.villageId && !planned.has(ri));
-      const removeList = toRemove.map(({ o }) => o.r).concat(freed);
+      const removeList = S.useRelics ? toRemove.map(({ o }) => o.r).concat(freed) : [];
       if (removeList.length) {
         html += '<div><b>Zdejmij najpierw:</b><ul>' + removeList.map((r) =>
           `<li>${esc(r.name)} z ${esc((vById.get(r.villageId) || { name: '#' + r.villageId }).name)}</li>`).join('') + '</ul></div>';
       }
-      html += '<div class="rp-muted">Kolejność: najpierw zdejmij niepotrzebne relikty, potem zakładaj nowe. Każde przeniesienie uruchamia cooldown zdjęcia (zwykle 24 h).</div>';
+      if (S.useRelics) html += '<div class="rp-muted">Kolejność: najpierw zdejmij niepotrzebne relikty, potem zakładaj nowe. Każde przeniesienie uruchamia cooldown zdjęcia (zwykle 24 h).</div>';
 
       if (data.blockedFlagIds && data.blockedFlagIds.size) {
         html += '<div class="rp-warn" style="margin-top:6px">⏳ Blokada zmiany flagi (24 h) – te wioski zostają bez zmian: '
@@ -1233,21 +1253,23 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
           + '. Po upływie blokady uruchom planer ponownie.</div>';
       }
       if (flagPlan.length) {
-        const keptFrom = new Set(flagPlan.filter((x) => x.flag.from === x.vi).map((x) => x.vi));
         html += '<h3>Flagi</h3><table><tr><th>Flaga</th><th>Przydziel w wiosce</th><th>Co zrobić</th></tr>'
           + flagPlan.map((x) => {
             const v = P.vills[x.vi];
-            const act = x.flag.from === x.vi ? '<span class="rp-muted">zostaje</span>'
+            const act = x.keep ? '<span class="rp-muted">zostaje (bez zmian)</span>'
               : x.flag.from ? `przenieś z ${esc((vById.get(x.flag.from) || { name: '#' + x.flag.from }).name)}` : 'załóż z magazynu';
             return `<tr><td>+${x.flag.pct}%${x.flag.level ? ' (poz. ' + x.flag.level + ')' : ''}</td>
             <td><a href="/game.php?village=${v.id}&screen=flags" target="_blank">${esc(v.name)}</a> <span class="rp-muted">(${v.x}|${v.y})</span></td><td>${act}</td></tr>`;
           }).join('')
           + '</table>';
-        const planFrom = new Set(flagPlan.map((x) => x.flag.from).filter(Boolean));
-        const toWithdraw = Object.keys(data.assignedFlags || {}).map(Number).filter((vid) => {
-          const a = data.assignedFlags[vid];
-          return a.type === FLAG_TYPE[S.mode] && S.reuseFlags && !keptFrom.has(vid) && !(data.blockedFlagIds && data.blockedFlagIds.has(vid));
+        const typeNow = (id) => data.assignedFlags && data.assignedFlags[id] && data.assignedFlags[id].type === FLAG_TYPE[S.mode];
+        const wd = new Set();
+        flagPlan.forEach((x) => {
+          if (x.keep) return;
+          if (x.flag.from != null) wd.add(x.flag.from);          // flaga przenoszona stąd – trzeba ją wycofać
+          if (typeNow(P.vills[x.vi].id)) wd.add(P.vills[x.vi].id); // wioska dostaje inną flagę – stara wraca do magazynu
         });
+        const toWithdraw = Array.from(wd).filter((vid) => S.reuseFlags && typeNow(vid) && !(data.blockedFlagIds && data.blockedFlagIds.has(vid)));
         if (toWithdraw.length) {
           html += '<div><b>Wycofaj flagi:</b> ' + toWithdraw.map((vid) =>
             `${esc((vById.get(vid) || { name: '#' + vid }).name)} (+${data.assignedFlags[vid].pct}%)`).join(', ') + '</div>';
@@ -1268,13 +1290,19 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
         removeList.forEach((r) => { T(r.villageId).relicRemove = r.name + ' (r' + r.range + ')'; T(r.villageId).relicRemoveInfo = relicInfo(r); });
         flagPlan.forEach((x) => {
           const t = T(P.vills[x.vi].id);
-          if (x.flag.from === x.vi) t.flagKeep = x.flag.pct; else t.flagPlace = x.flag.pct;
+          if (x.keep) t.flagKeep = x.flag.pct; else t.flagPlace = x.flag.pct;
         });
-        const keptFlag = new Set(flagPlan.filter((x) => x.flag.from === x.vi).map((x) => x.vi));
+        const wdIds = new Set();
+        flagPlan.forEach((x) => {
+          if (x.keep) return;
+          const tn = (id) => data.assignedFlags && data.assignedFlags[id] && data.assignedFlags[id].type === FLAG_TYPE[S.mode];
+          if (x.flag.from != null) wdIds.add(x.flag.from);
+          if (tn(P.vills[x.vi].id)) wdIds.add(P.vills[x.vi].id);
+        });
         if (S.reuseFlags) {
-          Object.keys(data.assignedFlags || {}).map(Number).forEach((vid) => {
-            const a = data.assignedFlags[vid];
-            if (a.type === FLAG_TYPE[S.mode] && !keptFlag.has(vid) && !(data.blockedFlagIds && data.blockedFlagIds.has(vid))) T(vid).flagRemove = a.pct;
+          wdIds.forEach((vid) => {
+            const a = data.assignedFlags && data.assignedFlags[vid];
+            if (a && a.type === FLAG_TYPE[S.mode] && !(data.blockedFlagIds && data.blockedFlagIds.has(vid))) T(vid).flagRemove = a.pct;
           });
         }
         Object.keys(plan.tasks).forEach((id) => { plan.names[id] = nameOf(+id); });
