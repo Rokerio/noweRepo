@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relikty – planer rozmieszczenia
 // @namespace    plemiona-roker
-// @version      1.9.0
+// @version      1.10.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @description  Podpowiada, gdzie założyć relikty zależnie od celu: atak, obrona albo szybsza rekrutacja w wybranej grupie wiosek
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.9.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.10.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 (function () {
@@ -634,6 +634,13 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
    *  Zapisany plan: lista zadań w panelu + podpowiedzi na stronach wiosek
    * ------------------------------------------------------------------ */
   // kolejka kroków: najpierw wszystkie zdjęcia/usunięcia, potem zakładanie (flaga musi być wolna, zanim trafi gdzie indziej)
+  // opis reliktu do podpowiedzi na stronie Skarbca: jednoznacznie wskazuje, który egzemplarz wziąć
+  const relicInfo = (r) => ({ id: r.id, stats: (r.statsText || []).slice(), range: r.range, name: r.name });
+  const relicBlock = (label, info) => {
+    if (!info) return esc(label);
+    return `<b>${esc(info.name)}</b>, promień <b>${info.range}</b>, nr <b>#${esc(String(info.id))}</b>`
+      + `<ul style="margin:2px 0 4px 18px;padding:0">${info.stats.map((x, i) => `<li${i === 0 ? ' style="font-weight:bold"' : ''}>${esc(x)}</li>`).join('')}</ul>`;
+  };
   function planQueue(pl, only) {
     const q = [];
     const ids = Object.keys(pl.tasks).sort((x, y) => String(pl.names[x] || x).localeCompare(String(pl.names[y] || y), 'pl'));
@@ -708,9 +715,9 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
         if (t.flagPlace != null) lines.push(`<span class="g">Załóż flagę +${t.flagPlace}%</span> ${pl.done[vid + ':flag:place'] ? '✓' : '(zielona ramka)'}`);
         if (t.flagKeep != null) lines.push(`Flaga +${t.flagKeep}% zostaje`);
       } else {
-        if (t.relicRemove) lines.push(`<span class="r">Zdejmij relikt:</span> ${esc(t.relicRemove)} ${pl.done[vid + ':relic:remove'] ? '✓' : ''}`);
-        if (t.relicPlace) lines.push(`<span class="g">Załóż relikt:</span> ${esc(t.relicPlace)} ${pl.done[vid + ':relic:place'] ? '✓' : ''}`);
-        if (t.relicKeep) lines.push(`Relikt zostaje: ${esc(t.relicKeep)}`);
+        if (t.relicRemove) lines.push(`<span class="r">Zdejmij relikt:</span> ${relicBlock(t.relicRemove, t.relicRemoveInfo)} ${pl.done[vid + ':relic:remove'] ? '✓' : ''}`);
+        if (t.relicPlace) lines.push(`<span class="g">Załóż relikt:</span> ${relicBlock(t.relicPlace, t.relicPlaceInfo)} ${pl.done[vid + ':relic:place'] ? '✓' : ''}`);
+        if (t.relicKeep) lines.push(`Relikt zostaje: ${relicBlock(t.relicKeep, t.relicKeepInfo)}`);
       }
       const pending = mine.filter((x) => !pl.done[x.key]);
       const nxt = nextTask(pl, kind, vid);
@@ -1203,10 +1210,11 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
         state.forEach(([ri, h]) => {
           const o = relics[ri], v = P.vills[h], cur = o.r.villageId;
           const label = o.r.name + ' (r' + o.r.range + ')';
-          if (cur === v.id) T(v.id).relicKeep = label;
-          else { T(v.id).relicPlace = label; if (cur) T(cur).relicRemove = label; }
+          const info = relicInfo(o.r);
+          if (cur === v.id) { T(v.id).relicKeep = label; T(v.id).relicKeepInfo = info; }
+          else { T(v.id).relicPlace = label; T(v.id).relicPlaceInfo = info; if (cur) { T(cur).relicRemove = label; T(cur).relicRemoveInfo = info; } }
         });
-        removeList.forEach((r) => { T(r.villageId).relicRemove = r.name + ' (r' + r.range + ')'; });
+        removeList.forEach((r) => { T(r.villageId).relicRemove = r.name + ' (r' + r.range + ')'; T(r.villageId).relicRemoveInfo = relicInfo(r); });
         flagPlan.forEach((x) => {
           const t = T(P.vills[x.vi].id);
           if (x.flag.from === x.vi) t.flagKeep = x.flag.pct; else t.flagPlace = x.flag.pct;
