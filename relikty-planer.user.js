@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relikty – planer rozmieszczenia
 // @namespace    plemiona-roker
-// @version      1.14.1
+// @version      1.15.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @description  Podpowiada, gdzie założyć relikty zależnie od celu: atak, obrona albo szybsza rekrutacja w wybranej grupie wiosek
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.14.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.15.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 (function () {
@@ -682,6 +682,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
   const nextTask = (pl, kind, skipVid) => planQueue(pl, kind).find((t) => !pl.done[t.key] && t.vid !== skipVid && !isBlocked(pl, t));
   const hhmm = (ms) => new Date(ms).toLocaleString('pl-PL', { weekday: 'short', hour: '2-digit', minute: '2-digit' });
   const AUTO_KEY = 'relikty_planer_auto';
+  const CONF_KEY = 'relikty_planer_autoconfirm';
+  const confirmOn = () => { try { return localStorage.getItem(CONF_KEY) !== '0'; } catch (e) { return true; } };
   const autoOn = () => { try { return localStorage.getItem(AUTO_KEY) !== '0'; } catch (e) { return true; } };
   const taskText = (pl, t) => {
     const x = pl.tasks[t.vid];
@@ -709,6 +711,7 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
     if (!f && !r) return '';
     return `<h3>Zapisany plan (${esc(when)})</h3>${f}${r}
       <div class="rp-row"><label><input type="checkbox" id="rp-auto" ${autoOn() ? 'checked' : ''}> automatycznie klikaj flagi</label>
+      <label><input type="checkbox" id="rp-conf" ${confirmOn() ? 'checked' : ''}> i sam potwierdzaj (Aktywacja)</label>
       <button class="sec" id="rp-clearplan" type="button">Wyczyść plan</button></div>`;
   }
 
@@ -887,28 +890,44 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       if (!target) return;
       lastClick = Date.now();
       target.click();
-      render('Kliknięto automatycznie – <b>potwierdź w oknie gry</b>, jeśli się pojawi.');
+      if (confirmOn()) {
+        // potwierdzenie za Ciebie: po wyborze flagi przycisk „Aktywacja”, po „Usuń flagę” ewentualne okno potwierdzenia
+        const clickBtn = (re, root) => {
+          const b = Array.from((root || document).querySelectorAll('a.btn, button, input[type=button], input[type=submit], .btn'))
+            .find((x) => re.test((x.value || x.textContent || '').trim()));
+          if (b) b.click();
+          return !!b;
+        };
+        if (what === 'a') setTimeout(() => clickBtn(/^(tak|ok|potwierdź|usuń|usun)/i, document.querySelector('.popup_box, #popup_box_container, .popup_box_container')), 700);
+        else setTimeout(() => clickBtn(/^aktywacja$/i), 700);
+        render('Kliknięto automatycznie i potwierdzam…');
+      } else render('Kliknięto automatycznie – <b>potwierdź w oknie gry</b>, jeśli się pojawi.');
     };
 
     let initial = null;
     const poll = setInterval(() => {
       if (initial === null) return; // czekamy, aż FlagsScreen się zainicjuje
       if (blockedFlag) return;
-      if (blockedCheck()) { blockedFlag = true; return; }
       const pl = loadPlan() || pl0;
       const st = curState();
       const wantRemove = t.flagRemove != null && !pl.done[vid + ':flag:remove'];
       const wantPlace = t.flagPlace != null && !pl.done[vid + ':flag:place'];
+      const wantTxt = t.flagPlace != null ? '+' + t.flagPlace + '%' : '';
+      const hasNow = st.vis && wantTxt && st.txt.indexOf(wantTxt) >= 0;
+      // blokadę 24 h sprawdzamy tylko, gdy krok faktycznie wymaga zmiany flagi (po założeniu flagi gra sama włącza cooldown!)
+      const needChange = (wantRemove && st.vis) || (!wantRemove && wantPlace && !hasNow);
+      if (needChange && blockedCheck()) { blockedFlag = true; return; }
+      if (!needChange && pl.blocked && pl.blocked[vid]) { delete pl.blocked[vid]; savePlan(pl); }
       if (wantRemove) {
         if (st.vis) autoClick('a');
         if (initial.vis && !st.vis) { document.querySelectorAll('.rp-hl-red').forEach((e) => e.classList.remove('rp-hl-red')); finish(vid + ':flag:remove'); }
-        else if (!initial.vis && !st.vis) { markDone(vid + ':flag:remove'); render('Flagi już nie ma – krok zaliczony.'); }
+        else if (!initial.vis && !st.vis) { finish(vid + ':flag:remove'); }
       } else if (wantPlace) {
-        const want = '+' + t.flagPlace + '%';
-        const has = st.vis && st.txt.indexOf(want) >= 0;
+        const want = wantTxt;
+        const has = hasNow;
         if (st.vis && !has) autoClick('a'); // inna flaga wisi – najpierw ją zdejmij
         else if (!has) autoClick('box');
-        if (has && initial.vis && initial.txt.indexOf(want) >= 0) { markDone(vid + ':flag:place'); render('Ta flaga już jest założona – krok zaliczony.'); }
+        if (has && initial.vis && initial.txt.indexOf(want) >= 0) { finish(vid + ':flag:place'); }
         else if (has) { document.querySelectorAll('.rp-hl-green').forEach((e) => e.classList.remove('rp-hl-green')); finish(vid + ':flag:place'); }
       }
       hl();
@@ -1111,6 +1130,8 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
         pl.done[c.dataset.done] = c.checked; savePlan(pl);
       }));
       panel.querySelectorAll('[data-start]').forEach((b) => (b.onclick = () => { const pl = loadPlan(); const n = pl && nextTask(pl, b.dataset.start); if (n) location.href = taskUrl(n); }));
+      const cf = q('#rp-conf');
+      if (cf) cf.onchange = () => { try { localStorage.setItem(CONF_KEY, cf.checked ? '1' : '0'); } catch (e) { /* ignore */ } };
       const au = q('#rp-auto');
       if (au) au.onchange = () => { try { localStorage.setItem(AUTO_KEY, au.checked ? '1' : '0'); } catch (e) { /* ignore */ } };
       const cp = q('#rp-clearplan');
