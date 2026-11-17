@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relikty – planer rozmieszczenia
 // @namespace    plemiona-roker
-// @version      1.10.0
+// @version      1.11.0
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @description  Podpowiada, gdzie założyć relikty zależnie od celu: atak, obrona albo szybsza rekrutacja w wybranej grupie wiosek
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.10.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.11.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 (function () {
@@ -744,7 +744,33 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
       } else render('<span class="g">✓ Zrobione.</span>');
     };
     render();
-    if (kind === 'relic') return;
+    // baner ma przetrwać przebudowę strony przez grę
+    setInterval(() => { if (!banner.isConnected) { const h = document.getElementById('content_value'); if (h) h.insertBefore(banner, h.firstChild); } }, 1000);
+    if (kind === 'relic') {
+      // automatyczne wykrycie wykonania kroku: co 4 s pobieram Skarbiec i sprawdzam, gdzie stoi dany relikt
+      let busy = false;
+      const check = async () => {
+        if (busy || redirectTimer) return;
+        const pl = loadPlan(); if (!pl) return;
+        const pend = mine.filter((x) => !pl.done[x.key]);
+        if (!pend.length) return;
+        busy = true;
+        try {
+          const r = await fetch(`/game.php?village=${vid}&screen=relic_system`, { credentials: 'same-origin' });
+          const inv = extractInventory(await r.text()).map(relicFromRaw);
+          for (const x of pend) {
+            const info = x.op === 'remove' ? t.relicRemoveInfo : t.relicPlaceInfo;
+            const rel = info && inv.find((q) => q.id === info.id);
+            if (!rel) continue;
+            if ((x.op === 'place' && rel.villageId === vid) || (x.op === 'remove' && rel.villageId !== vid)) { finish(x.key); break; }
+          }
+        } catch (e) { /* ignoruj */ }
+        busy = false;
+      };
+      setTimeout(check, 1500);
+      setInterval(check, 4000);
+      return;
+    }
 
     // --- strona flag: podświetlenia + automatyczne wykrywanie wykonania kroku ---
     const curState = () => {
