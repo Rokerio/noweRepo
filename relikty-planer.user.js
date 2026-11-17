@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Relikty – planer rozmieszczenia
 // @namespace    plemiona-roker
-// @version      1.14.0
+// @version      1.14.1
 // @updateURL    https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @downloadURL  https://raw.githubusercontent.com/Rokerio/noweRepo/main/relikty-planer.user.js
 // @description  Podpowiada, gdzie założyć relikty zależnie od celu: atak, obrona albo szybsza rekrutacja w wybranej grupie wiosek
@@ -10,7 +10,7 @@
 // @grant        none
 // ==/UserScript==
 // rejestr wersji dla Sprawdzacza skryptów (localStorage, osobny na każdym urządzeniu)
-try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.14.0',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
+try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-planer']={v:'1.14.1',t:Date.now()};localStorage.setItem('gdp_registry',JSON.stringify(__r));}catch(e){}
 
 
 (function () {
@@ -873,8 +873,16 @@ try{var __r=JSON.parse(localStorage.getItem('gdp_registry')||'{}');__r['relikty-
         const boxes = Array.from(document.querySelectorAll(`#flags_container .flag_box[id^="flag_box_${pl0.flagType}_"]`))
           .filter((b) => (b.getAttribute('title') || '').trim().startsWith(want));
         const stock = (b) => parseInt(((b.querySelector('.flag_count') || {}).textContent || '').replace(/\D/g, ''), 10) || 0;
-        target = boxes.find((b) => stock(b) > 0) || (boxes.every((b) => !stock(b) && !((b.querySelector('.flag_count') || {}).textContent || '').trim()) ? boxes[0] : null);
-        if (!target && boxes.length) { render('<span class="r">Brak takiej flagi w magazynie (+' + t.flagPlace + '%).</span>'); lastClick = Date.now(); return; }
+        target = boxes.find((b) => stock(b) > 0) || null;
+        // liczniki są już wypełnione po inicjalizacji FlagsScreen: pusty licznik = brak flagi w magazynie (nie klikamy w pusty kafelek)
+        if (!target) {
+          const plNow = loadPlan() || pl0;
+          const srcs = planQueue(plNow, 'flag').filter((x) => x.op === 'remove' && !plNow.done[x.key] && plNow.tasks[x.vid] && plNow.tasks[x.vid].flagRemove === t.flagPlace);
+          render('<span class="r">Brak flagi +' + t.flagPlace + '% w magazynie.</span> '
+            + (srcs.length ? 'Najpierw wycofaj ją w: ' + srcs.map((x) => `<a href="${taskUrl(x)}">${esc(plNow.names[x.vid] || x.vid)}</a>`).join(', ') + ' – wróci do magazynu, potem wróć do tej wioski (plan sam do niej wróci).'
+              : 'Nie ma jej też w planie do wycofania – policz plan od nowa.'));
+          lastClick = Date.now(); return;
+        }
       }
       if (!target) return;
       lastClick = Date.now();
